@@ -2,6 +2,7 @@
  * 自律型ニュース探索エージェントモジュール (SearchAgent.gs)
  * Gemini API の「Google検索グラウンディング (Google Search Tool)」を利用し、
  * インターネット全体から最新記事をリアルタイムに自動リサーチします。
+ * 【最適化】複数検索クエリの自動生成と分散巡回ループを搭載。テーマの偏りを完全解決。
  */
 
 /**
@@ -11,40 +12,144 @@
  * @return {Array<Object>} 探索され、要約・分類された標準フォーマットの記事リスト
  */
 function discoverNewsViaGoogleSearch(tags, focusDomains) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  if (!apiKey) {
-    throw new Error("Gemini APIキー（GEMINI_API_KEY）がスクリプトプロパティに設定されていません。");
+  const functionName = 'discoverNewsViaGoogleSearch';
+  
+  // 1. 興味タグ群から、複数の異なる「具体的でフォーカスされたGoogle検索用クエリ」を3個生成する
+  let queries = [];
+  try {
+    queries = generateSearchQueries(tags);
+  } catch(e) {
+    console.error("検索クエリ生成エラー。フォールバックとしてデフォルトの検索を実行します:", e);
+    // フォールバック: 重みの高い上位タグをスペース区切りで連結したクエリ
+    queries = [tags.slice(0, 3).join(' ') + ' latest news'];
   }
 
-  // リアルタイム検索と推論を両立する安定版の gemini-1.5-flash を利用
+  console.log("探索に使用するクエリ:", queries);
+  let allDiscoveredArticles = [];
+
+  // 2. 生成された3つのクエリを個別にGoogle検索ツール（グラウンディング）で実行
+  queries.forEach((query, index) => {
+    try {
+      console.log(`探索クエリ [${index + 1}/3] 実行中: "${query}"`);
+      const articles = executeSingleSearchQuery(query, focusDomains);
+      allDiscoveredArticles = allDiscoveredArticles.concat(articles);
+      
+      // API制限の回避およびGAS実行保護のための短いインターバル
+      Utilities.sleep(1000);
+    } catch(err) {
+      console.error(`クエリ「${query}」での探索に失敗しました:`, err);
+      writeLog(functionName, 'warning', `Search query [${query}] failed: ${err.message}`);
+    }
+  });
+
+  // 3. 発見された全記事を、正規化したURLに基づいて重複排除（ユニーク化）
+  const seenUrls = new Set();
+  const uniqueArticles = [];
+
+  allDiscoveredArticles.forEach(art => {
+    const normUrl = normalizeUrl(art.url);
+    if (!seenUrls.has(normUrl)) {
+      seenUrls.add(normUrl);
+      uniqueArticles.push(art);
+    } else {
+      console.log(`探索内重複URLを除外しました: ${art.url}`);
+    }
+  });
+
+  console.log(`自律リサーチ全体で ${allDiscoveredArticles.length} 件の記事を発見、重複排除により ${uniqueArticles.length} 件に精選されました。`);
+  return uniqueArticles;
+}
+
+/**
+ * ユーザーの興味タグを分析し、Google検索用の最適な最新ニュース探索クエリを3個生成します。
+ */
+function generateSearchQueries(activeTags) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
   const modelName = 'gemini-1.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
-  
-  // プロンプトの構築
-  let prompt = `あなたは非常に優秀な自律型ニュースリサーチエージェントです。
-Google検索ツールを活用し、現在（基準日: ${todayStr}）から過去24〜48時間以内にWeb上に公開された、以下の興味タグに関する最新かつ重要度の高いニュース記事、プレスリリース、技術的なブログ記事を探索・発見してください。
 
-■ 探索の優先キーワード・タグ：
-${tags.map(t => `- "${t}"`).join('\n')}
+  const prompt = `あなたは非常に優秀なニュース検索クエリ生成エージェントです。
+指示基準日「${todayStr}」において、以下のユーザーの興味タグに関する過去24時間以内の最新ニュース、重要なテックブログ、新技術発表をWeb上で発見するための、英語の具体的で明確な「Google検索用クエリ（検索窓に入力する文字列）」を正確に3個生成してください。
 
-■ 優先して巡回・検索すべきドメインやサイト（あれば）：
+興味タグ：
+${activeTags.join(', ')}
+
+【生成のルール】：
+1. タグごとに異なるテーマ（例: ゲーム、AIエージェント、半導体など）が均等にカバーされるよう、それぞれ独自の焦点を持ったクエリを作ってください。
+2. 過去24時間の最新記事を探すため、"latest news 2026"、"new release 2026" などのワードや、具体的な業界トレンドワードを適切に含めてください。
+3. 出力は必ず以下のJSONスキーマに従い、余計な説明文は一切含めないでください。`;
+
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      queries: {
+        type: "ARRAY",
+        items: { type: "STRING" },
+        description: "Google検索窓に入力する具体的な検索用英文クエリ3個の配列"
+      }
+    },
+    required: ["queries"]
+  };
+
+  const payload = {
+    contents: [
+      { parts: [{ text: prompt }] }
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: responseSchema,
+      temperature: 0.4
+    }
+  };
+
+  const response = UrlFetchApp.fetch(endpoint, {
+    method: 'post',
+    contentType: 'application/json',
+    headers: { 'x-goog-api-key': apiKey },
+    payload: JSON.stringify(payload),
+    muteHttpExceptions: true
+  });
+
+  if (response.getResponseCode() !== 200) {
+    throw new Error(`クエリ生成APIエラー: ${response.getContentText()}`);
+  }
+
+  const json = JSON.parse(response.getContentText());
+  const resultText = json.candidates[0].content.parts[0].text;
+  return JSON.parse(resultText).queries || [];
+}
+
+/**
+ * 単一の検索クエリを用いて、Google検索グラウンディングによる記事探索と評価を1回実行します。
+ */
+function executeSingleSearchQuery(query, focusDomains) {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const modelName = 'gemini-1.5-flash';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+
+  const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
+
+  let prompt = `あなたは優秀な自律型ニュースリサーチエージェントです。
+Google検索ツールを活用し、検索クエリ「${query}」について、基準日（${todayStr}）から過去24〜48時間以内にWebに公開された最新かつ有益な情報・記事・ニュースを発見してください。
+
+■ 優先して結果から抽出・巡回すべきWebサイトやドメイン（あれば）：
 ${focusDomains.map(d => `- ${d}`).join('\n')}
 
-【探索・評価のルール】：
-1. 興味タグの領域における業界動向、新技術、ビジネス戦略、重要リリースに焦点を当ててください。
-2. 信頼できる配信元から、正確な「URL」および「サイト名（source）」を引用してください。
-3. 発見した記事の中から、優先的にユーザーが読むべき良質な記事を最大10〜15件精選してください。
-4. 各記事のAI要約は、3行程度の簡潔な日本語箇条書きで分かりやすく整理してください。`;
+【抽出・評価のルール】：
+1. 信頼できる配信元の正確なWebページの「URL」および「サイト名（source）」を抜き出してください。
+2. その検索キーワードに関する最も新しく、ユーザーにとって付加価値の高い記事を最大6件精選してください。
+3. 各記事のAI要約は、3行程度の簡潔な日本語箇条書きで分かりやすく要約してください。
+4. なぜこの記事を読むべきか、何が面白いのかの選定理由を明快な日本語1文で作成してください。`;
 
-  // 構造化出力のためのスキーマ定義 (発見された複数記事の一括返却用)
+  // 構造化出力スキーマ定義
   const articleSchema = {
     type: "OBJECT",
     properties: {
       title: { type: "STRING", description: "ニュース記事の正確なタイトル" },
       url: { type: "STRING", description: "ニュース記事の正確なWebページのフルURL（有効なURLであること）" },
-      source: { type: "STRING", description: "ニュースの配信元・ウェブサイト名 (例: TechCrunch, ファミ通, PR TIMES 等)" },
+      source: { type: "STRING", description: "ニュースの配信元・ウェブサイト名 (例: TechCrunch, PR TIMES 等)" },
       ai_summary: { type: "STRING", description: "核心的な内容を3行以内の簡潔な日本語箇条書きでまとめた要約" },
       category: { 
         type: "STRING", 
@@ -54,15 +159,15 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
       tags: { 
         type: "ARRAY", 
         items: { type: "STRING" }, 
-        description: "記事に関連するキーワードタグの配列（例: ['semiconductor', 'generative AI'] 等。3個以内）" 
+        description: "記事に関連するキーワードタグの配列（3個以内）" 
       },
       importance: { 
         type: "INTEGER", 
-        description: "1から5までの客観的重要度スコア（5が最高）" 
+        description: "客観的重要度スコア（1から5、5が最高）" 
       },
       reason: { 
         type: "STRING", 
-        description: "なぜこの記事を優先して読むべきか（ユーザーにとっての価値や業界へのインパクト）を分かりやすく表現した日本語の1文" 
+        description: "なぜこの記事を優先して読むべきかを示す日本語の1文" 
       }
     },
     required: ["title", "url", "source", "ai_summary", "category", "tags", "importance", "reason"]
@@ -74,7 +179,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
       articles: {
         type: "ARRAY",
         items: articleSchema,
-        description: "探索・発見された最新ニュース記事の一覧"
+        description: "探索・発見されたニュース記事の一覧"
       }
     },
     required: ["articles"]
@@ -82,17 +187,10 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
 
   const payload = {
     contents: [
-      {
-        parts: [
-          { text: prompt }
-        ]
-      }
+      { parts: [{ text: prompt }] }
     ],
-    // Google検索ツールを有効化！
     tools: [
-      {
-        googleSearch: {}
-      }
+      { googleSearch: {} }
     ],
     generationConfig: {
       responseMimeType: "application/json",
@@ -101,14 +199,10 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
     }
   };
 
-  console.log("Geminiの自律検索グラウンディングを開始します...");
-
   const response = UrlFetchApp.fetch(endpoint, {
     method: 'post',
     contentType: 'application/json',
-    headers: {
-      'x-goog-api-key': apiKey
-    },
+    headers: { 'x-goog-api-key': apiKey },
     payload: JSON.stringify(payload),
     muteHttpExceptions: true
   });
@@ -117,23 +211,17 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
   const responseText = response.getContentText();
 
   if (responseCode !== 200) {
-    throw new Error(`自律探索APIエラー (Status: ${responseCode}): ${responseText}`);
+    throw new Error(`Google検索グラウンディングに失敗しました (Status: ${responseCode}): ${responseText}`);
   }
 
   const json = JSON.parse(responseText);
   
   if (!json.candidates || json.candidates.length === 0 || !json.candidates[0].content) {
-    throw new Error(`探索APIから無効なレスポンスが返されました: ${responseText}`);
+    throw new Error(`グラウンディングAPIから無効なレスポンスが返されました: ${responseText}`);
   }
 
   const resultText = json.candidates[0].content.parts[0].text;
   const parsedData = JSON.parse(resultText);
 
-  if (!parsedData.articles || !Array.isArray(parsedData.articles)) {
-    return [];
-  }
-
-  console.log(`自律探索完了。Web上から ${parsedData.articles.length} 件の記事が発見・要約されました。`);
-  
-  return parsedData.articles;
+  return parsedData.articles || [];
 }

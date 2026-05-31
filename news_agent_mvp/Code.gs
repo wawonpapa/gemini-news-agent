@@ -1,6 +1,7 @@
 /**
  * Personal News Agent MVP Core Module (Code.gs)
  * 毎朝の自律リサーチジョブ、エラーハンドリング、興味スコア計算を統括します。
+ * 【最適化】Setを用いた高速重複チェック、およびログ自動クリーンアップ処理を追加。
  */
 
 /**
@@ -27,7 +28,7 @@ function dailyNewsJob() {
     console.log("探索キーワードタグ:", activeTags);
     console.log("優先探索ドメイン:", focusDomains);
 
-    // 2. Gemini API + Google Search Grounding でインターネット全体から最新記事を探索
+    // 2. Gemini API + Google Search Grounding でインターネット全体から最新記事を分散探索
     const discoveredArticles = discoverNewsViaGoogleSearch(activeTags, focusDomains);
     const newArticlesSaved = [];
 
@@ -37,12 +38,16 @@ function dailyNewsJob() {
 
     let processedCount = 0;
 
+    // 【最適化・新規】DBの全登録記事IDを1回のAPI呼び出しでキャッシュ読み込み (高速Set判定)
+    const existingIds = getAllArticleIdsSet();
+    console.log(`キャッシュに登録済みの記事ID数: ${existingIds.size} 件`);
+
     // 3. 発見された記事のフィルタリングとDB保存
     discoveredArticles.forEach(art => {
       const articleId = makeArticleId(art.url);
 
-      // 重複チェック
-      if (articleExists(articleId)) {
+      // 高速Set判定により、スプレッドシートへの大量重複ロードAPI呼び出しを「0回」に削減！
+      if (existingIds.has(articleId)) {
         return;
       }
 
@@ -70,6 +75,9 @@ function dailyNewsJob() {
       };
 
       saveArticle(processedArticle);
+      
+      // 次のループの判定に備えてメモリ上のキャッシュSetにも即時追加
+      existingIds.add(articleId);
       newArticlesSaved.push(processedArticle);
       processedCount++;
     });
@@ -81,6 +89,9 @@ function dailyNewsJob() {
 
     if (allPendingArticles.length === 0) {
       writeLog(functionName, 'success', '新規に配信するニュースはありませんでした。');
+      
+      // 【最適化】終了前に古いログの自動クリーンアップを実行してシート肥大化を防止
+      cleanupOldLogs();
       return;
     }
 
@@ -92,6 +103,7 @@ function dailyNewsJob() {
 
     // 6. Gmail でプレミアムニュースレターとして配信
     if (topArticlesToNotify.length > 0) {
+      console.log(`上位${topArticlesToNotify.length}件の記事をGmailで配信します。`);
       sendDailyDigest(topArticlesToNotify);
 
       // ステータスを 'notified' に更新
@@ -103,6 +115,9 @@ function dailyNewsJob() {
     } else {
       writeLog(functionName, 'success', '配信条件を満たす記事がありませんでした。');
     }
+
+    // 【最適化・新規】終了前に古い実行ログの自動クリーンアップを実行 (行数制限対応)
+    cleanupOldLogs();
 
   } catch (error) {
     console.error("ETLジョブの実行中に重大なエラーが発生しました:", error);

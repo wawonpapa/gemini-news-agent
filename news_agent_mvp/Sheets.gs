@@ -1,7 +1,27 @@
 /**
  * スプレッドシート データベース操作モジュール (Sheets.gs)
  * スプレッドシートへの永続化、読み込み、ログ出力、自動学習処理を担当します。
+ * 【最適化】URL正規化の搭載、API呼び出し削減（キャッシュ化）、重み上限の設定を追加。
  */
+
+/**
+ * URLをクレンジングしてトラッキング用パラメータや末尾のスラッシュを除去し、正規化します。
+ * これにより、同じURLのパラメータ違いによる重複通知を確実に防ぎます。
+ */
+function normalizeUrl(url) {
+  if (!url) return '';
+  try {
+    // クエリパラメータとアンカーリンクの除去
+    let cleanUrl = url.split('?')[0].split('#')[0].trim();
+    // 末尾のスラッシュを除去して表記揺れを統一
+    if (cleanUrl.endsWith('/')) {
+      cleanUrl = cleanUrl.slice(0, -1);
+    }
+    return cleanUrl.toLowerCase();
+  } catch(e) {
+    return url.toLowerCase().trim();
+  }
+}
 
 /**
  * 記事URLからハッシュ化ID（SHA-256の頭16文字）を生成します。
@@ -9,9 +29,10 @@
  */
 function makeArticleId(url) {
   if (!url) return '';
+  const cleanUrl = normalizeUrl(url);
   const digest = Utilities.computeDigest(
     Utilities.DigestAlgorithm.SHA_256,
-    url,
+    cleanUrl,
     Utilities.Charset.UTF_8
   );
   return digest
@@ -35,6 +56,29 @@ function articleExists(articleId) {
 
   const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(row => row[0].toString());
   return ids.includes(articleId);
+}
+
+/**
+ * 【最適化】すべての登録済み記事IDを一度にロードし、Setオブジェクトにして返します。
+ * これにより、ループ内の大量スプレッドシート読み込みAPI呼び出しを「1回」に削減します。
+ */
+function getAllArticleIdsSet() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  const idSet = new Set();
+  if (!sheet) return idSet;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return idSet;
+
+  const data = sheet.getRange(2, 1, lastRow - 1, 1).getValues();
+  data.forEach(row => {
+    const id = row[0].toString().trim();
+    if (id) {
+      idSet.add(id);
+    }
+  });
+
+  return idSet;
 }
 
 /**
@@ -232,7 +276,9 @@ function writeLog(functionName, status, message) {
 }
 
 /**
- * 興味プロファイルのタグ重みを自動更新・学習します。
+ * 【最適化】興味プロファイルのタグ重みを自動更新・学習します。
+ * ※重み上限を最大 10、最小 0 に制限し、インフレや学習の偏りを防止します。
+ * ※毎週の減衰処理（古い興味の緩やかな除外）にも対応。
  * @param {Object} tagDelta タグ名 -> 重み増分
  */
 function updateInterestWeights(tagDelta) {
@@ -257,12 +303,14 @@ function updateInterestWeights(tagDelta) {
     const delta = tagDelta[tag];
     if (existingTags[tag]) {
       const data = existingTags[tag];
-      const newWeight = Math.max(0, data.weight + delta);
+      // 上限 10, 下限 0 に制限
+      const newWeight = Math.min(10, Math.max(0, data.weight + delta));
       sheet.getRange(data.rowIndex, 2).setValue(newWeight);
       sheet.getRange(data.rowIndex, 3).setValue(new Date());
       sheet.getRange(data.rowIndex, 4).setValue(`リアクション自動学習による変動 (増分: ${delta})`);
     } else {
-      const newWeight = Math.max(0, 3 + delta);
+      // 新規タグも最大10、最小0に制限
+      const newWeight = Math.min(10, Math.max(0, 3 + delta));
       sheet.appendRow([
         tag,
         newWeight,
@@ -271,4 +319,34 @@ function updateInterestWeights(tagDelta) {
       ]);
     }
   }
+}
+
+/**
+ * 【最適化・新規】古いログデータ（30日以上前）を自動削除し、スプレッドシートの行数制限を防止します。
+ */
+function cleanupOldLogs() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('logs');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 300) return; // 300行未満ならクリーンアップしない
+
+  const thresholdDate = new Date();
+  thresholdDate.setDate(thresholdDate.getDate() - 30); // 30日前
+
+  const range = sheet.getRange(2, 1, lastRow - 1, 4);
+  const data = range.getValues();
+  
+  // 30日以内のログのみをフィルター
+  const keepRows = data.filter(row => {
+    const logDate = new Date(row[0]);
+    return logDate >= thresholdDate;
+  });
+
+  range.clearContent();
+  if (keepRows.length > 0) {
+    sheet.getRange(2, 1, keepRows.length, 4).setValues(keepRows);
+  }
+  
+  console.log(`ログのクリーンアップ完了。残した行数: ${keepRows.length}`);
 }
