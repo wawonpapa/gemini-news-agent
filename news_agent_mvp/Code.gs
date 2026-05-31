@@ -10,6 +10,8 @@
  */
 function dailyNewsJob() {
   const functionName = 'dailyNewsJob';
+  const startTime = Date.now(); // GAS 6分実行制限ガード用
+  const MAX_EXECUTION_MS = 5 * 60 * 1000; // 5分で安全停止（1分の余裕を持たせる）
   writeLog(functionName, 'running', '自律探索ニュース収集を開始します。');
 
   try {
@@ -38,6 +40,9 @@ function dailyNewsJob() {
 
     let processedCount = 0;
 
+    // 【最適化】興味プロファイルを事前に1回だけキャッシュ読み込み（ループ内の重複API呼び出しを防止）
+    const cachedProfileMap = getInterestProfileMap();
+
     // 【最適化・新規】DBの全登録記事IDを1回のAPI呼び出しでキャッシュ読み込み (高速Set判定)
     const existingIds = getAllArticleIdsSet();
     console.log(`キャッシュに登録済みの記事ID数: ${existingIds.size} 件`);
@@ -55,8 +60,15 @@ function dailyNewsJob() {
         return;
       }
 
-      // 4. 各記事の総合興味スコアの算出
-      const interestScore = calculateInterestScore(art.tags || [], art.importance || 1);
+      // 【安全制限】GAS 6分実行制限ガード：5分経過で現在の結果を保存して安全停止
+      if (Date.now() - startTime > MAX_EXECUTION_MS) {
+        console.warn(`実行時間が5分を超過したため、記事処理を安全に中断します。処理済み: ${processedCount}件`);
+        writeLog(functionName, 'warning', `Execution time limit reached. Processed ${processedCount} articles before safe stop.`);
+        return;
+      }
+
+      // 4. 各記事の総合興味スコアの算出（キャッシュ済みプロファイルを使用）
+      const interestScore = calculateInterestScore(art.tags || [], art.importance || 1, cachedProfileMap);
 
       const processedArticle = {
         article_id: articleId,
@@ -129,9 +141,12 @@ function dailyNewsJob() {
 
 /**
  * 記事に関連付けられたタグと、ユーザーの興味プロファイルの重みを掛け合わせて、総合興味スコアを計算します。
+ * @param {Array<string>} tags 記事のタグ配列
+ * @param {number} importance 重要度スコア (1-5)
+ * @param {Object} [profileMap] キャッシュ済みの興味プロファイルマップ（省略時は都度読み込み）
  */
-function calculateInterestScore(tags, importance) {
-  const profile = getInterestProfileMap();
+function calculateInterestScore(tags, importance, profileMap) {
+  const profile = profileMap || getInterestProfileMap();
   
   let tagScore = 0;
   if (tags && Array.isArray(tags)) {
@@ -170,7 +185,7 @@ function getUnnotifiedArticles() {
         author: row[6],
         ai_summary: row[7],
         category: row[8],
-        tags: row[9],
+        tags: row[9] ? row[9].toString().split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; }) : [],
         importance: parseInt(row[10]) || 1,
         interest_score: parseFloat(row[11]) || 0,
         reason: row[12],

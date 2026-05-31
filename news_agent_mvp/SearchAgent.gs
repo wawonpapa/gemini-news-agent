@@ -64,7 +64,7 @@ function discoverNewsViaGoogleSearch(tags, focusDomains) {
  * ユーザーの興味タグを分析し、Google検索用の最適な最新ニュース探索クエリを3個生成します。
  */
 function generateSearchQueries(activeTags) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const apiKey = getGeminiApiKey();
   const modelName = 'gemini-1.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
@@ -125,7 +125,7 @@ ${activeTags.join(', ')}
  * 単一の検索クエリを用いて、Google検索グラウンディングによる記事探索と評価を1回実行します。
  */
 function executeSingleSearchQuery(query, focusDomains) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  const apiKey = getGeminiApiKey();
   const modelName = 'gemini-1.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 

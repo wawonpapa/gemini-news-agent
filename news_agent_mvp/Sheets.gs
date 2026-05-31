@@ -5,14 +5,48 @@
  */
 
 /**
+ * 【共通ヘルパー】Gemini APIキーをスクリプトプロパティから取得します。
+ * SearchAgent.gs / Gemini.gs など複数モジュールから共通利用されます。
+ * @return {string} APIキー
+ * @throws {Error} APIキーが未設定の場合
+ */
+function getGeminiApiKey() {
+  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
+  if (!apiKey) {
+    throw new Error("Gemini APIキー（GEMINI_API_KEY）がスクリプトプロパティに設定されていません。");
+  }
+  return apiKey;
+}
+
+/**
  * URLをクレンジングしてトラッキング用パラメータや末尾のスラッシュを除去し、正規化します。
  * これにより、同じURLのパラメータ違いによる重複通知を確実に防ぎます。
  */
 function normalizeUrl(url) {
   if (!url) return '';
   try {
-    // クエリパラメータとアンカーリンクの除去
-    let cleanUrl = url.split('?')[0].split('#')[0].trim();
+    // アンカーリンク（#以降）の除去
+    let cleanUrl = url.split('#')[0].trim();
+
+    // クエリパラメータはトラッキング用のみ除去し、記事IDに使われるパラメータは保持する
+    const urlParts = cleanUrl.split('?');
+    let baseUrl = urlParts[0];
+
+    if (urlParts.length > 1) {
+      const trackingParams = new Set([
+        'utm_source', 'utm_medium', 'utm_campaign', 'utm_term', 'utm_content',
+        'fbclid', 'gclid', 'msclkid', 'ref', 'referrer', 'si', 'smid'
+      ]);
+
+      const params = urlParts[1].split('&')
+        .filter(function(param) {
+          var key = param.split('=')[0].toLowerCase();
+          return !trackingParams.has(key);
+        });
+
+      cleanUrl = params.length > 0 ? baseUrl + '?' + params.join('&') : baseUrl;
+    }
+
     // 末尾のスラッシュを除去して表記揺れを統一
     if (cleanUrl.endsWith('/')) {
       cleanUrl = cleanUrl.slice(0, -1);
@@ -334,7 +368,8 @@ function cleanupOldLogs() {
   const thresholdDate = new Date();
   thresholdDate.setDate(thresholdDate.getDate() - 30); // 30日前
 
-  const range = sheet.getRange(2, 1, lastRow - 1, 4);
+  const dataRowCount = lastRow - 1;
+  const range = sheet.getRange(2, 1, dataRowCount, 4);
   const data = range.getValues();
   
   // 30日以内のログのみをフィルター
@@ -347,6 +382,12 @@ function cleanupOldLogs() {
   if (keepRows.length > 0) {
     sheet.getRange(2, 1, keepRows.length, 4).setValues(keepRows);
   }
+
+  // 余剰行を削除してシートのゴーストデータ肥大化を防止
+  const excessRows = dataRowCount - keepRows.length;
+  if (excessRows > 0) {
+    sheet.deleteRows(keepRows.length + 2, excessRows);
+  }
   
-  console.log(`ログのクリーンアップ完了。残した行数: ${keepRows.length}`);
+  console.log(`ログのクリーンアップ完了。残した行数: ${keepRows.length}, 削除した行数: ${excessRows}`);
 }

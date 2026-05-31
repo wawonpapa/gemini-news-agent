@@ -4,6 +4,26 @@
  */
 
 /**
+ * URL文字列をHTML属性内で安全に使えるようサニタイズします。
+ * javascript: プロトコルやHTML特殊文字によるXSSを防止します。
+ * @param {string} url サニタイズ対象のURL
+ * @return {string} サニタイズ済みURL
+ */
+function sanitizeUrlForHtml(url) {
+  if (!url) return '';
+  var trimmedUrl = url.toString().trim();
+  // javascript: プロトコルをブロック
+  if (trimmedUrl.toLowerCase().startsWith('javascript:')) return '';
+  // HTML特殊文字をエスケープ
+  return trimmedUrl
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
+}
+
+/**
  * HTTP GET リクエスト受付処理
  */
 function doGet(e) {
@@ -152,20 +172,33 @@ function doGet(e) {
     const finalStatus = (action === 'open') ? 'opened' : action;
     updateArticleStatus(articleId, finalStatus);
 
+    // 【学習機能】Good/Bad リアクション時に興味プロファイルの重みを自動更新
+    if (action === 'good' || action === 'bad') {
+      var delta = (action === 'good') ? 1 : -1;
+      var articleTags = (article.tags || '').toString().split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+      if (articleTags.length > 0) {
+        var tagDelta = {};
+        articleTags.forEach(function(tag) { tagDelta[tag] = delta; });
+        updateInterestWeights(tagDelta);
+        console.log(`興味プロファイルを自動学習更新しました (action: ${action}, tags: ${articleTags.join(', ')})`);
+      }
+    }
+
     writeLog('doGet-ActionConfirmed', 'success', `Action: ${action}, ArticleId: ${articleId}`);
 
     // 記事を開くアクションの場合は対象URLにリダイレクト
     if (action === 'open') {
+      const safeUrl = sanitizeUrlForHtml(article.url);
       const redirectHtml = `
         <!DOCTYPE html>
         <html>
         <head>
           <meta charset="utf-8">
-          <script>window.location.href = "${article.url}";</script>
+          <script>window.location.href = "${safeUrl}";</script>
         </head>
         <body>
           <div style="font-family:sans-serif; text-align:center; padding:50px; color:#64748b;">
-            <p>記事を開いています... 自動で遷移しない場合は <a href="${article.url}">こちらをクリック</a> してください。</p>
+            <p>記事を開いています... 自動で遷移しない場合は <a href="${safeUrl}">こちらをクリック</a> してください。</p>
           </div>
         </body>
         </html>
@@ -223,7 +256,7 @@ function doGet(e) {
           <div class="success-badge">🎉</div>
           <h2>アクション登録完了</h2>
           <p>反応「<strong>${action.toUpperCase()}</strong>」を履歴に記録し、興味プロファイルを更新しました！</p>
-          <a href="${article.url}" target="_blank" class="btn">記事を読む ↗</a>
+          <a href="${sanitizeUrlForHtml(article.url)}" target="_blank" class="btn">記事を読む ↗</a>
         </div>
       </body>
       </html>

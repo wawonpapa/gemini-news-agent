@@ -1,6 +1,12 @@
 /**
  * Gemini API 連携モジュール
  * Structured Outputs (構造化出力) 機能を用いて、パースエラーの起きない安全な要約と分類を行います。
+ *
+ * 【現状の位置づけ】
+ * 現在、日次探索フローでは SearchAgent.gs の executeSingleSearchQuery() が
+ * 探索と要約・分類を同時に行っているため、このモジュールは dailyNewsJob から直接呼び出されていません。
+ * 今後、「既存記事の再要約」や「手動URL投入からの単組要約」など、探索とは独立した
+ * スタンドアロン要約機能を追加する際に使用します。
  */
 
 /**
@@ -9,10 +15,7 @@
  * @return {Object} AI要約結果 (summary, category, tags, importance, reason)
  */
 function summarizeArticleWithGemini(article) {
-  const apiKey = PropertiesService.getScriptProperties().getProperty('GEMINI_API_KEY');
-  if (!apiKey) {
-    throw new Error("Gemini APIキー（GEMINI_API_KEY）がスクリプトプロパティに設定されていません。");
-  }
+  const apiKey = getGeminiApiKey();
 
   // 安定版かつ高速・低コストな gemini-1.5-flash を利用
   const modelName = 'gemini-1.5-flash';

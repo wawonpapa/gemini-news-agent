@@ -42,10 +42,12 @@ function initSpreadsheet() {
       ]
     },
     {
+      // ※ NOTIFY_EMAIL, GEMINI_API_KEY, WEB_APP_URL, MASTER_DOC_ID は
+      //    ScriptProperties（スクリプトプロパティ）で管理します。
+      //    ここでは実行時にコードが参照する動作パラメータのみ管理します。
       name: 'settings',
       headers: ['key', 'value'],
       initialRows: [
-        ['notify_email', 'your-email@example.com'],
         ['daily_limit', '30'], // 1日の要約上限
         ['notify_top_n', '10'], // 配信件数
         ['gemini_model', 'gemini-1.5-flash'] // 使用AIモデル
