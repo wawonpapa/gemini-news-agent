@@ -127,7 +127,7 @@ function getMonthlyGoodAndImportantArticles() {
 
     // 過去30日以内のデータが対象
     if (fetchedAt >= thirtyDaysAgo) {
-      if (status === 'good' || score >= 35) {
+      if (status === 'good' || status === 'read_later') {
         results.push({
           title: row[4],
           source: row[3],
@@ -153,7 +153,7 @@ function sendMonthlyDigestNotification(docUrl, count) {
   const email = PropertiesService.getScriptProperties().getProperty('NOTIFY_EMAIL');
   if (!email) return;
 
-  const subject = `📊 月次ニュースダイジェストが追記更新されました [${count}件]`;
+  const subject = `[月次レポート] 月次ニュースダイジェストが追記更新されました [${count}件]`;
   const body = `
 Personal News Agent よりお知らせです。
 
@@ -165,7 +165,7 @@ ${count} 件
 ■ マスタードキュメントのリンクはこちら
 ${docUrl}
 
-💡 NotebookLM への同期方法
+■ NotebookLM への同期方法
 1. NotebookLM ( https://notebooklm.google.com/ ) を開きます。
 2. 対象のノートブックを開き、ソース一覧にある「Master News Archive」の横に表示される「再同期（Sync）」ボタンを1クリックしてください。
 3. 今回追記された最新のニュースナレッジが、NotebookLMに即座に読み込まれます。
