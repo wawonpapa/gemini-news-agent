@@ -47,16 +47,22 @@
    npm install -g @google/clasp
    ```
 2. Google Apps Script API を有効化します： [https://script.google.com/home/usersettings](https://script.google.com/home/usersettings) にアクセスし、APIの設定を **「オン」** にします。
-3. コマンドラインでログインを実行します（ブラウザで認証画面が開きます）：
+3. コマンドラインでログインを実行します（ブラウザで認証画面が開かない／localhost接続拒否エラーが出る場合は、ブラウザのアドレスバーに表示されたURL全体をコピーしてコード入力欄に貼り付けます）：
    ```bash
-   clasp login
+   clasp login --no-localhost
    ```
-4. Web版GASエディタの「プロジェクトの設定（歯車マーク）」から「プロジェクトID」をコピーし、ローカルフォルダで以下を実行して紐付けます：
-   ```bash
-   clasp clone "コピーしたプロジェクトID"
-   ```
-5. 以降、ローカルでコードを変更したら、コマンド一発でGASクラウド側に同期（アップロード）できるようになります：
-   ```bash
+4. Web版GASエディタの「プロジェクトの設定（歯車マーク）」から **「スクリプト ID」** をコピーします。
+5. **ローカルファイルを安全にクラウドへ送信するため、上書きの危険がある `clasp clone` は使用せず、手動で設定ファイルを作成して安全に紐付けを行います：**
+   * PowerShellでプロジェクトフォルダに移動します：
+     ```powershell
+     cd news_agent_mvp
+     ```
+   * ローカルの最新コードを消さないよう、設定ファイル（`.clasp.json`）をPowerShellコマンドで直接作成します（スクリプトID部分はご自身のものに置き換えてください）：
+     ```powershell
+     Set-Content -Path .clasp.json -Value '{"scriptId":"コピーしたスクリプトID"}'
+     ```
+6. 紐付けが完了したら、以下のコマンドでローカルの最新コードをクラウド側へ一括転送（アップロード）します：
+   ```powershell
    clasp push
    ```
 
@@ -70,9 +76,14 @@
 4. **「デプロイ」** をクリックし、発行された **「ウェブアプリのURL」** をコピーしておきます。（`https://script.google.com/macros/s/〜〜〜/exec` のような形式です）
 
 ### ステップ 4: GAS「スクリプト プロパティ」に環境変数を保存する
-1. Web版GASエディタの左側メニューから **「プロジェクトの設定（歯車マーク）」** を開きます。
-2. **「スクリプト プロパティ」** セクションまでスクロールし、**「スクリプト プロパティを追加」** を押して以下のキーと値を登録します：
-   - `GEMINI_API_KEY`: Google AI Studioから取得したAPIキー。
+1. **Google AI Studio から Gemini API キーを無料で取得します（未取得の場合）：**
+   * [Google AI Studio](https://aistudio.google.com/) にアクセスし、ご自身のGoogleアカウントでログインします。
+   * 画面左上にある青いボタン **「Get API key（APIキーを取得）」** をクリックします。
+   * **「Create API key（APIキーを作成）」** ボタンをクリックし、ポップアップで **「Create API key in new project（新しいプロジェクトでAPIキーを作成）」** を選択します。
+   * 生成された `AIzaSy` から始まる長いAPIキーをコピーし、安全な場所に控えておきます。
+2. Web版GASエディタの左側メニューから **「プロジェクトの設定（歯車マーク）」** を開きます。
+3. **「スクリプト プロパティ」** セクションまでスクロールし、**「スクリプト プロパティを追加」** を押して以下のキーと値を登録します：
+   - `GEMINI_API_KEY`: コピーしたGemini APIキー。
    - `NOTIFY_EMAIL`: ニュースサマリを受け取りたいご自身のGmailアドレス。
    - `WEB_APP_URL`: **ステップ 3** でコピーした「ウェブアプリのURL」。
 

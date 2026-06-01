@@ -161,7 +161,7 @@ function doGet(e) {
       </body>
       </html>
     `;
-    return HtmlService.createHtmlOutput(html);
+    return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
   }
 
   // --- 2. 「確定」が押された場合は、スプレッドシートへの書き込みを実行 ---
@@ -175,12 +175,22 @@ function doGet(e) {
     // 【学習機能】Good/Bad リアクション時に興味プロファイルの重みを自動更新
     if (action === 'good' || action === 'bad') {
       var delta = (action === 'good') ? 1 : -1;
-      var articleTags = (article.tags || '').toString().split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
-      if (articleTags.length > 0) {
+      
+      var articleTags = [];
+      if (Array.isArray(article.tags)) {
+        articleTags = article.tags;
+      } else if (typeof article.tags === 'string') {
+        articleTags = article.tags.split(',').map(function(t) { return t.trim(); });
+      } else if (article.tags) {
+        articleTags = [String(article.tags)];
+      }
+      
+      var filteredTags = articleTags.filter(function(t) { return t.trim().length > 0; });
+      if (filteredTags.length > 0) {
         var tagDelta = {};
-        articleTags.forEach(function(tag) { tagDelta[tag] = delta; });
+        filteredTags.forEach(function(tag) { tagDelta[tag] = delta; });
         updateInterestWeights(tagDelta);
-        console.log(`興味プロファイルを自動学習更新しました (action: ${action}, tags: ${articleTags.join(', ')})`);
+        console.log(`興味プロファイルを自動学習更新しました (action: ${action}, tags: ${filteredTags.join(', ')})`);
       }
     }
 
@@ -203,7 +213,7 @@ function doGet(e) {
         </body>
         </html>
       `;
-      return HtmlService.createHtmlOutput(redirectHtml);
+      return HtmlService.createHtmlOutput(redirectHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
     }
 
     // リアクション記録完了画面
@@ -261,7 +271,7 @@ function doGet(e) {
       </body>
       </html>
     `;
-    return HtmlService.createHtmlOutput(successHtml);
+    return HtmlService.createHtmlOutput(successHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 
   } catch (error) {
     writeLog('doGet-ActionError', 'error', error.message);
@@ -294,5 +304,5 @@ function createPremiumHtmlOutput(htmlContent, themeColor) {
     </body>
     </html>
   `;
-  return HtmlService.createHtmlOutput(html);
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }

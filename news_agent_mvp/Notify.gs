@@ -39,18 +39,18 @@ function sendDailyDigest(articles) {
         .card-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
         .source-tag { font-size: 11px; font-weight: 700; color: #7c3aed; background-color: #f3e8ff; padding: 4px 10px; border-radius: 99px; text-transform: uppercase; letter-spacing: 0.5px; }
         .score-badge { font-size: 11px; font-weight: 700; color: #059669; background-color: #d1fae5; padding: 4px 10px; border-radius: 99px; }
-        .card-title { font-size: 18px; font-weight: 700; color: #1a202c; line-height: 1.4; margin: 8px 0 14px 0; text-decoration: none; display: block; }
-        .card-title:hover { color: #4f46e5; }
+        .card-title { font-size: 18px; font-weight: 700; color: #1e293b !important; line-height: 1.4; margin: 8px 0 14px 0; text-decoration: none; display: block; }
+        .card-title:hover { color: #6366f1 !important; text-decoration: underline; }
         .ai-summary { font-size: 14px; color: #4a5568; line-height: 1.6; background-color: #f8fafc; border-radius: 8px; padding: 14px; margin-bottom: 16px; border-left: 3px solid #cbd5e1; }
         .reason-box { font-size: 13px; font-weight: 500; color: #1e1b4b; background-color: #eef2ff; border-radius: 8px; padding: 12px 14px; margin-bottom: 20px; border-left: 4px solid #4f46e5; }
         .tags-container { margin-bottom: 20px; }
         .tag-pill { display: inline-block; font-size: 11px; color: #4a5568; background-color: #edf2f7; padding: 3px 8px; border-radius: 6px; margin-right: 6px; margin-bottom: 6px; }
         .action-bar { border-top: 1px solid #edf2f7; padding-top: 16px; text-align: center; }
-        .btn { display: inline-block; font-size: 12px; font-weight: 700; padding: 8px 16px; border-radius: 6px; text-decoration: none; margin: 0 4px; transition: background-color 0.2s; }
-        .btn-open { background-color: #4f46e5; color: #ffffff; }
-        .btn-good { background-color: #10b981; color: #ffffff; }
-        .btn-bad { background-color: #ef4444; color: #ffffff; }
-        .btn-later { background-color: #3b82f6; color: #ffffff; }
+        .btn { display: inline-block; font-size: 12px; font-weight: 700; padding: 8px 18px; border-radius: 8px; text-decoration: none; margin: 4px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.08); transition: all 0.2s; }
+        .btn-open { background-color: #6366f1; color: #ffffff !important; }
+        .btn-good { background-color: #10b981; color: #ffffff !important; }
+        .btn-bad { background-color: #f43f5e; color: #ffffff !important; }
+        .btn-later { background-color: #0ea5e9; color: #ffffff !important; }
         .footer { background-color: #f8fafc; border-top: 1px solid #edf2f7; padding: 30px; text-align: center; font-size: 12px; color: #a0aec0; line-height: 1.5; }
         .footer a { color: #7c3aed; text-decoration: none; font-weight: 600; }
       </style>
@@ -70,9 +70,17 @@ function sendDailyDigest(articles) {
   articles.forEach((a, index) => {
     const baseLink = `${webAppUrl}?article_id=${encodeURIComponent(a.article_id)}`;
     
-    // タグの配列整形
-    const tagsHtml = (a.tags || '')
-      .split(',')
+    // タグの配列整形 (配列と文字列の両方に対応)
+    let tagList = [];
+    if (Array.isArray(a.tags)) {
+      tagList = a.tags;
+    } else if (typeof a.tags === 'string') {
+      tagList = a.tags.split(',').map(t => t.trim());
+    } else if (a.tags) {
+      tagList = [String(a.tags)];
+    }
+
+    const tagsHtml = tagList
       .map(tag => tag.trim())
       .filter(tag => tag.length > 0)
       .map(tag => `<span class="tag-pill">#${tag}</span>`)
@@ -100,7 +108,7 @@ function sendDailyDigest(articles) {
         </div>
 
         <div class="reason-box">
-          💡 <strong>読むべき理由:</strong> ${a.reason}
+          &#128161; <strong>読むべき理由:</strong> ${a.reason}
         </div>
 
         <div class="tags-container">
@@ -108,10 +116,10 @@ function sendDailyDigest(articles) {
         </div>
 
         <div class="action-bar">
-          <a href="${baseLink}&action=open" target="_blank" class="btn btn-open">読む ↗</a>
-          <a href="${baseLink}&action=good" target="_blank" class="btn btn-good">Good 👍</a>
-          <a href="${baseLink}&action=bad" target="_blank" class="btn btn-bad">Bad 👎</a>
-          <a href="${baseLink}&action=read_later" target="_blank" class="btn btn-later">あとで読む 📌</a>
+          <a href="${baseLink}&action=open" target="_blank" class="btn btn-open">読む &#8599;</a>
+          <a href="${baseLink}&action=good" target="_blank" class="btn btn-good">Good &#128077;</a>
+          <a href="${baseLink}&action=bad" target="_blank" class="btn btn-bad">Bad &#128078;</a>
+          <a href="${baseLink}&action=read_later" target="_blank" class="btn btn-later">あとで読む &#128204;</a>
         </div>
       </div>
     `;

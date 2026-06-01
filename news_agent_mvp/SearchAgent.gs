@@ -34,8 +34,8 @@ function discoverNewsViaGoogleSearch(tags, focusDomains) {
       const articles = executeSingleSearchQuery(query, focusDomains);
       allDiscoveredArticles = allDiscoveredArticles.concat(articles);
       
-      // API制限の回避およびGAS実行保護のための短いインターバル
-      Utilities.sleep(1000);
+      // API制限の回避およびGAS実行保護のための10秒間の十分なインターバル（無料枠対策）
+      Utilities.sleep(10000);
     } catch(err) {
       console.error(`クエリ「${query}」での探索に失敗しました:`, err);
       writeLog(functionName, 'warning', `Search query [${query}] failed: ${err.message}`);
@@ -65,7 +65,7 @@ function discoverNewsViaGoogleSearch(tags, focusDomains) {
  */
 function generateSearchQueries(activeTags) {
   const apiKey = getGeminiApiKey();
-  const modelName = 'gemini-1.5-flash';
+  const modelName = 'gemini-3.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
@@ -104,7 +104,7 @@ ${activeTags.join(', ')}
     }
   };
 
-  const response = UrlFetchApp.fetch(endpoint, {
+  const response = fetchWithRetry(endpoint, {
     method: 'post',
     contentType: 'application/json',
     headers: { 'x-goog-api-key': apiKey },
@@ -126,7 +126,7 @@ ${activeTags.join(', ')}
  */
 function executeSingleSearchQuery(query, focusDomains) {
   const apiKey = getGeminiApiKey();
-  const modelName = 'gemini-1.5-flash';
+  const modelName = 'gemini-3.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
@@ -199,7 +199,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
     }
   };
 
-  const response = UrlFetchApp.fetch(endpoint, {
+  const response = fetchWithRetry(endpoint, {
     method: 'post',
     contentType: 'application/json',
     headers: { 'x-goog-api-key': apiKey },
@@ -224,4 +224,43 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
   const parsedData = JSON.parse(resultText);
 
   return parsedData.articles || [];
+}
+
+/**
+ * 一時的な通信エラーや429/503混雑制限が発生した際に、自動で指数バックオフ待機して再試行を行うラッパー関数です。
+ * 無料プランのAPI制限に引っかかっても、自動で少し待ってから健気にリトライします。
+ */
+function fetchWithRetry(url, options, maxRetries = 3, initialDelayMs = 3000) {
+  let delay = initialDelayMs;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = UrlFetchApp.fetch(url, options);
+      const code = response.getResponseCode();
+      
+      if (code === 200) {
+        return response;
+      }
+      
+      // 429 (Quota Exceeded) や 503 (Unavailable) の一時的エラー
+      if (code === 429 || code === 503) {
+        if (i === maxRetries - 1) {
+          return response; // リトライ上限に達した場合は諦めてそのまま返す（上位で詳細エラーを表示するため）
+        }
+        console.warn(`APIが一時的な制限に達しました (Status: ${code})。${delay / 1000}秒後に自動リトライします... (試行 ${i + 1}/${maxRetries})`);
+        Utilities.sleep(delay);
+        delay *= 2.5; // バックオフ時間を引き伸ばす (3s -> 7.5s -> 18.75s)
+        continue;
+      }
+      
+      return response; // その他のエラーは即時返して上位で検知させる
+    } catch (e) {
+      if (i === maxRetries - 1) {
+        throw e;
+      }
+      console.warn(`通信エラーが発生しました: ${e.toString()}。${delay / 1000}秒後に自動リトライします... (試行 ${i + 1}/${maxRetries})`);
+      Utilities.sleep(delay);
+      delay *= 2.5;
+    }
+  }
+  throw new Error("最大再試行回数を超過しました。");
 }

@@ -17,8 +17,8 @@
 function summarizeArticleWithGemini(article) {
   const apiKey = getGeminiApiKey();
 
-  // 安定版かつ高速・低コストな gemini-1.5-flash を利用
-  const modelName = 'gemini-1.5-flash';
+  // 安定版かつ高速・低コストな gemini-3.5-flash を利用
+  const modelName = 'gemini-3.5-flash';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const prompt = `あなたは個人向けの優れたニュースキュレーターです。
