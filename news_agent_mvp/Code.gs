@@ -31,7 +31,8 @@ function dailyNewsJob() {
     console.log("優先探索ドメイン:", focusDomains);
 
     // 2. Gemini API + Google Search Grounding でインターネット全体から最新記事を分散探索
-    const discoveredArticles = discoverNewsViaGoogleSearch(activeTags, focusDomains);
+    // startTime を渡し、検索ループ内でも GAS 6分制限を監視する
+    const discoveredArticles = discoverNewsViaGoogleSearch(activeTags, focusDomains, startTime, MAX_EXECUTION_MS);
     const newArticlesSaved = [];
 
     const settings = getSettingsMap();

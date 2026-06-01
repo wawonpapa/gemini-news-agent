@@ -86,10 +86,12 @@ function sendDailyDigest(articles) {
       .map(tag => `<span class="tag-pill">#${tag}</span>`)
       .join(' ');
 
-    // 3行要約の箇条書き化（もし改行があれば改行ごとにマークアップ）
+    // 3行要約の箇条書き化（Geminiが返す先頭の「- 」「・」「• 」などを除去してから付与）
     const formattedSummary = (a.ai_summary || '')
       .split('\n')
       .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .map(line => line.replace(/^[-・•＊\*]\s*/, ''))  // 先頭の箇条書きマーカーを除去
       .filter(line => line.length > 0)
       .map(line => `• ${line}`)
       .join('<br>');

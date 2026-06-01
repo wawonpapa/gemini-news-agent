@@ -9,9 +9,11 @@
  * 興味タグとフォーカスドメインに基づいて、最新ニュースをGoogle検索経由で自律探索します。
  * @param {Array<string>} tags 探索対象の興味タグ配列
  * @param {Array<string>} focusDomains 優先的に巡回させたいドメイン・キーワード配列
+ * @param {number} startTime dailyNewsJob開始時刻(ms) - 6分制限監視用
+ * @param {number} maxExecutionMs 安全停止の閾値(ms)
  * @return {Array<Object>} 探索され、要約・分類された標準フォーマットの記事リスト
  */
-function discoverNewsViaGoogleSearch(tags, focusDomains) {
+function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecutionMs) {
   const functionName = 'discoverNewsViaGoogleSearch';
   
   // 1. 興味タグ群から、複数の異なる「具体的でフォーカスされたGoogle検索用クエリ」を3個生成する
@@ -29,13 +31,21 @@ function discoverNewsViaGoogleSearch(tags, focusDomains) {
 
   // 2. 生成された3つのクエリを個別にGoogle検索ツール（グラウンディング）で実行
   queries.forEach((query, index) => {
+    // 【6分制限ガード】残り60秒未満なら探索を安全に打ち切る
+    if (startTime && maxExecutionMs) {
+      const elapsed = Date.now() - startTime;
+      if (elapsed > maxExecutionMs - 60000) {
+        console.warn(`残り実行時間が60秒未満のため、クエリ[${index + 1}]以降の探索をスキップします。経過: ${Math.round(elapsed/1000)}秒`);
+        return;
+      }
+    }
     try {
       console.log(`探索クエリ [${index + 1}/3] 実行中: "${query}"`);
       const articles = executeSingleSearchQuery(query, focusDomains);
       allDiscoveredArticles = allDiscoveredArticles.concat(articles);
       
-      // API制限の回避およびGAS実行保護のための10秒間の十分なインターバル（無料枠対策）
-      Utilities.sleep(10000);
+      // API制限の回避のためのインターバル（3秒に短縮 - 元の10秒から削減）
+      Utilities.sleep(3000);
     } catch(err) {
       console.error(`クエリ「${query}」での探索に失敗しました:`, err);
       writeLog(functionName, 'warning', `Search query [${query}] failed: ${err.message}`);
