@@ -9,3 +9,7 @@ node_modules/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+
+# Private developer rules & retired documents
+GEMINI.md
+old/
