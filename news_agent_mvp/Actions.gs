@@ -45,6 +45,93 @@ function doGet(e) {
     const webAppUrl = PropertiesService.getScriptProperties().getProperty('WEB_APP_URL');
     const confirmUrl = `${webAppUrl}?article_id=${articleId}&action=${action}&confirm=true`;
 
+    // ─────────────────────────────────────────────────────────────────────────
+    // 'open' アクション専用: 1ページ完結方式
+    // ─────────────────────────────────────────────────────────────────────────
+    // 【問題】GAS Web アプリの iframe は sandbox 属性に
+    //   allow-top-navigation-by-user-activation が設定されている。
+    //   これにより window.top へのJS遷移は「ユーザーの実クリック操作」がある場合のみ許可され、
+    //   window.onload など自動実行では永遠にブロックされる。
+    // 【解決策】2ページ目を廃止し、このボタンのクリック（User Activation）の瞬間に
+    //   window.top.location.href でニュースサイトへ直接ジャンプ。
+    //   反応の記録は fetch の keepalive オプションでバックグラウンド送信。
+    if (action === 'open') {
+      // JSON.stringify でURL内の特殊文字（スペース等）もJSに安全に埋め込む
+      const safeArticleUrlForJs = JSON.stringify(article.url || '');
+      const safeConfirmUrlForJs = JSON.stringify(confirmUrl);
+      const openHtml = `
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <meta charset="utf-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1">
+          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
+          <title>記事を開く | News Agent</title>
+          <style>
+            body {
+              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+              background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%);
+              color: #1e293b; text-align: center; padding: 50px 20px; margin: 0;
+              min-height: 100vh; display: flex; align-items: center; justify-content: center;
+            }
+            .card {
+              max-width: 480px; width: 100%;
+              background: rgba(255,255,255,0.95); backdrop-filter: blur(12px);
+              padding: 40px 30px; border-radius: 24px;
+              box-shadow: 0 20px 40px rgba(15,23,42,0.1);
+              border: 1px solid rgba(255,255,255,0.7);
+            }
+            .icon-header { font-size: 52px; margin-bottom: 24px; animation: bounce 2s infinite; }
+            h2 { margin-top: 0; font-weight: 800; font-size: 24px; color: #0f172a; }
+            .article-title {
+              font-weight: 700; color: #334155; margin: 24px 0 36px 0;
+              font-size: 1.05em; line-height: 1.5; background-color: #f8fafc;
+              padding: 20px; border-radius: 12px; border-left: 5px solid #6366f1; text-align: left;
+            }
+            .btn {
+              display: inline-block; width: 90%; padding: 16px; color: white;
+              background-color: #6366f1; border: none; border-radius: 12px;
+              font-weight: 700; font-size: 1.15em; cursor: pointer;
+              transition: transform 0.2s, box-shadow 0.2s;
+              box-shadow: 0 4px 15px rgba(99,102,241,0.3);
+              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            }
+            .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
+            .cancel-btn {
+              display: block; margin-top: 24px; color: #94a3b8; background: none;
+              border: none; font-size: 0.95em; font-weight: 600; cursor: pointer;
+              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            }
+            .cancel-btn:hover { color: #64748b; }
+            @keyframes bounce {
+              0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); }
+            }
+          </style>
+          <script>
+            function confirmAndOpen() {
+              var articleUrl = ${safeArticleUrlForJs};
+              var confirmUrl = ${safeConfirmUrlForJs};
+              // keepalive: ページ遷移後もリクエストが確実にサーバーへ到達し反応を記録する
+              try { fetch(confirmUrl, { mode: 'no-cors', keepalive: true }); } catch(e) {}
+              // ボタンクリック = User Activation → allow-top-navigation-by-user-activation をクリア
+              window.top.location.href = articleUrl;
+            }
+          </script>
+        </head>
+        <body>
+          <div class="card">
+            <div class="icon-header">↗️</div>
+            <h2>アクションの確認</h2>
+            <div class="article-title">「${article.title}」</div>
+            <button onclick="confirmAndOpen()" class="btn">記事を開いて確定する ↗️</button>
+            <button onclick="window.close();" class="cancel-btn">キャンセル（閉じる）</button>
+          </div>
+        </body>
+        </html>
+      `;
+      return HtmlService.createHtmlOutput(openHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    }
+
     let actionLabel = "";
     let btnColor = "#6366f1";
     let icon = "🔗";
@@ -61,13 +148,12 @@ function doGet(e) {
       actionLabel = "あとで読む (ブックマーク)"; 
       btnColor = "#3b82f6"; 
       icon = "📌";
-    } else if (action === 'open') { 
-      actionLabel = "記事を開く (ブラウザ遷移)"; 
-      btnColor = "#6366f1"; 
-      icon = "↗️";
     }
 
     // プレミアムデザイン確認画面 (ボットの先読みクリックを防止)
+    // open と同様に fetch(keepalive) + window.top.location.href の1クリック完結方式に統一
+    const safeArticleUrlForJs = JSON.stringify(article.url || '');
+    const safeConfirmUrlForJs = JSON.stringify(confirmUrl);
     const html = `
       <!DOCTYPE html>
       <html>
@@ -123,12 +209,14 @@ function doGet(e) {
             padding: 16px; 
             color: white; 
             background-color: ${btnColor}; 
-            text-decoration: none; 
+            border: none;
             border-radius: 12px; 
             font-weight: 700; 
-            font-size: 1.15em; 
+            font-size: 1.15em;
+            cursor: pointer;
             transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1); 
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
           }
           .btn:hover { 
             transform: translateY(-2px);
@@ -139,9 +227,12 @@ function doGet(e) {
             display: block; 
             margin-top: 24px; 
             color: #94a3b8; 
-            text-decoration: none; 
+            background: none;
+            border: none;
             font-size: 0.95em; 
             font-weight: 600;
+            cursor: pointer;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
           }
           .cancel:hover { color: #64748b; }
           @keyframes bounce {
@@ -149,14 +240,24 @@ function doGet(e) {
             50% { transform: translateY(-8px); }
           }
         </style>
+        <script>
+          function confirmAndGo() {
+            var articleUrl = ${safeArticleUrlForJs};
+            var confirmUrl = ${safeConfirmUrlForJs};
+            // keepalive: ページ遷移後もリクエストが確実にサーバーへ到達し反応を記録する
+            try { fetch(confirmUrl, { mode: 'no-cors', keepalive: true }); } catch(e) {}
+            // ボタンクリック = User Activation → sandbox の allow-top-navigation-by-user-activation をクリア
+            window.top.location.href = articleUrl;
+          }
+        </script>
       </head>
       <body>
         <div class="card">
           <div class="icon-header">${icon}</div>
           <h2>アクションの確認</h2>
           <div class="title">「${article.title}」</div>
-          <a href="${confirmUrl}" class="btn">${actionLabel} を確定する</a>
-          <a href="#" onclick="window.close();" class="cancel">キャンセル（閉じる）</a>
+          <button onclick="confirmAndGo()" class="btn">${actionLabel} を確定する</button>
+          <button onclick="window.close();" class="cancel">キャンセル（閉じる）</button>
         </div>
       </body>
       </html>
@@ -196,7 +297,8 @@ function doGet(e) {
 
     writeLog('doGet-ActionConfirmed', 'success', `Action: ${action}, ArticleId: ${articleId}`);
 
-    // 記事を開くアクションの場合は対象URLにリダイレクト
+    // 成功画面のデザインをアクションごとに最適化
+    // 記事を開くアクションの場合は対象URLに同一タブ内で直接ジャンプ
     if (action === 'open') {
       const safeUrl = sanitizeUrlForHtml(article.url);
       const redirectHtml = `
@@ -204,11 +306,24 @@ function doGet(e) {
         <html>
         <head>
           <meta charset="utf-8">
-          <script>window.location.href = "${safeUrl}";</script>
+          <script>
+            window.onload = function() {
+              // GAS Web アプリは常に script.googleusercontent.com の sandbox iframe 内で動作する。
+              // window.location.replace() では iframe 自体が遷移してしまい、
+              // 外部サイトの X-Frame-Options によってブロックされる（「接続が拒否されました」エラー）。
+              // window.top.location.replace() でトップレベルウィンドウを直接遷移させることで完全に回避する。
+              try {
+                window.top.location.replace("${safeUrl}");
+              } catch(e) {
+                // cross-origin sandbox で top へのアクセスが拒否された場合のフォールバック
+                window.location.href = "${safeUrl}";
+              }
+            };
+          </script>
         </head>
         <body>
-          <div style="font-family:sans-serif; text-align:center; padding:50px; color:#64748b;">
-            <p>記事を開いています... 自動で遷移しない場合は <a href="${safeUrl}">こちらをクリック</a> してください。</p>
+          <div style="font-family: sans-serif; text-align: center; padding: 50px; color: #64748b;">
+            <p>記事へ移動しています... 自動で遷移しない場合は <a href="${safeUrl}" target="_top" onclick="window.top.location.replace('${safeUrl}'); return false;">こちらをクリック</a> してください。</p>
           </div>
         </body>
         </html>
