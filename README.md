@@ -12,7 +12,46 @@ Gemini APIとGoogle Apps Script (GAS) を使用して、自身の興味に合わ
 
 収集した記事のうち、評価の高いものはGoogleドキュメントに自動で集約され、NotebookLMのソースとして再同期することで簡単にナレッジ化（AIによる追加学習）できます。
 
----
+### システム全体フロー
+
+```mermaid
+flowchart TD
+    subgraph DAILY["🔄 日次サイクル（毎朝 自動実行）"]
+        direction TB
+        A["⚙️ GAS\ndailyNewsJob\n時間トリガー起動"]
+        B["🤖 Gemini API\n検索クエリ自動生成\n興味タグを分析"]
+        C["🔍 Google Search Grounding\n過去24〜48時間の記事を\nインターネット全体から自律探索"]
+        D["📊 Google Spreadsheet\narticlesシートへ保存\n重複排除・スコアリング"]
+        E["📧 Gmail\nHTMLニュースレター配信\n上位10件を厳選送信"]
+    end
+
+    subgraph USER["👤 ユーザーアクション"]
+        direction TB
+        F["📬 メール受信\nAI要約・読む理由を確認"]
+        G["🔗 アクションリンククリック\n読む / Good / Bad / あとで読む"]
+        H["🛡️ GAS Web App\n確認画面\nボット誤作動を防止"]
+        I["📝 記事を閲覧\nニュースサイトへ直接遷移"]
+    end
+
+    subgraph LEARN["🧠 自動学習フィードバックループ"]
+        J["📊 Google Spreadsheet\ninterest_profileシートの\n興味タグ重みを自動更新"]
+    end
+
+    subgraph MONTHLY["📅 月次サイクル（月末 自動実行）"]
+        K["⚙️ GAS\nmonthlyDigestJob"]
+        L["📄 Google ドキュメント\n📖 Master News Agent Archive\nGood/あとで読み記事を末尾に自動追記"]
+        M["🔬 NotebookLM\nソース再同期（1クリック）\nナレッジベースへ統合"]
+    end
+
+    A --> B --> C --> D --> E --> F --> G --> H
+    H --> I
+    H --> J
+    J -->|"次回の探索クエリ生成に反映"| B
+
+    D -->|"Good / あとで読む 記事"| K
+    K --> L --> M
+```
+
 
 ## 主な機能
 
