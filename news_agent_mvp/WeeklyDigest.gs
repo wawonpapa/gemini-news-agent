@@ -1,22 +1,54 @@
 /**
- * 月次ニュースダイジェスト（NotebookLMインプット用）作成モジュール (MonthlyDigest.gs)
- * Google ドライブ上の単一の「マスタードキュメント」の末尾に、毎月優良記事を自動追記します。
+ * 週次ニュースダイジェスト（NotebookLMインプット用）作成モジュール (WeeklyDigest.gs)
+ * Google ドライブ上の単一の「マスタードキュメント」の末尾に、毎週優良記事を自動追記します。
  * これにより、NotebookLM側では「再同期(Sync)」ボタンを1クリックするだけで最新ニュースが反映されます。
+ *
+ * 実行タイミング（推奨）: 毎週土曜日 午前5時〜6時
  */
 
 /**
- * 定期実行ジョブ: 先月の優良記事を収集し、マスターGoogle Docsの末尾に自動追記してメール通知します。
+ * 現在の日付が今年の何週目かを計算して返します（日曜始まり）。
+ * @param {Date} date
+ * @returns {number}
  */
-function monthlyDigestJob() {
-  const functionName = 'monthlyDigestJob';
-  writeLog(functionName, 'running', '月次マスターアーカイブの更新処理を開始します。');
+function getWeekNumber_(date) {
+  const startOfYear = new Date(date.getFullYear(), 0, 1);
+  const dayOfYear = Math.floor((date - startOfYear) / (24 * 60 * 60 * 1000));
+  return Math.ceil((dayOfYear + startOfYear.getDay() + 1) / 7);
+}
+
+/**
+ * 当週の開始日（月曜日）と終了日（日曜日）の文字列を返します。
+ * @param {Date} date 基準となる日付
+ * @returns {{start: string, end: string}}
+ */
+function getWeekRange_(date) {
+  const dayOfWeek = date.getDay(); // 0=日曜, 1=月曜, ..., 6=土曜
+  const diffToMonday = (dayOfWeek === 0) ? -6 : 1 - dayOfWeek;
+  const monday = new Date(date);
+  monday.setDate(date.getDate() + diffToMonday);
+  const sunday = new Date(monday);
+  sunday.setDate(monday.getDate() + 6);
+  return {
+    start: Utilities.formatDate(monday, 'Asia/Tokyo', 'MM/dd'),
+    end: Utilities.formatDate(sunday, 'Asia/Tokyo', 'MM/dd')
+  };
+}
+
+/**
+ * 定期実行ジョブ: 直近1週間の優良記事を収集し、マスターGoogle Docsの末尾に自動追記してメール通知します。
+ * 推奨トリガー: 週次タイマー → 毎週土曜日 → 午前5時〜6時
+ */
+function weeklyDigestJob() {
+  const functionName = 'weeklyDigestJob';
+  writeLog(functionName, 'running', '週次マスターアーカイブの更新処理を開始します。');
 
   try {
-    const articles = getMonthlyGoodAndImportantArticles();
+    const articles = getWeeklyGoodAndImportantArticles();
     
     if (articles.length === 0) {
-      console.log("過去30日以内に対象となる優良記事（Goodまたは高興味スコア）が存在しないため、追記をスキップします。");
-      writeLog(functionName, 'success', 'No articles qualified for monthly digest');
+      console.log("過去7日以内に対象となる優良記事（Goodまたは高興味スコア）が存在しないため、追記をスキップします。");
+      writeLog(functionName, 'success', 'No articles qualified for weekly digest');
       return;
     }
 
@@ -50,16 +82,18 @@ function monthlyDigestJob() {
               .setBold(true)
               .setForegroundColor('#1e1b4b');
               
-      body.appendParagraph("このドキュメントは、自律リサーチエージェントによって厳選されたニュース記事が蓄積される自動マスターアーカイブです。\n本ファイルを NotebookLM にソースとして1回だけ登録しておけば、毎月GASがバックグラウンドで最新情報を追記し、NotebookLM側で「再同期」を押すだけで最新ナレッジに同期されます。\n");
+      body.appendParagraph("このドキュメントは、自律リサーチエージェントによって厳選されたニュース記事が蓄積される自動マスターアーカイブです。\n本ファイルを NotebookLM にソースとして1回だけ登録しておけば、毎週GASがバックグラウンドで最新情報を追記し、NotebookLM側で「再同期」を押すだけで最新ナレッジに同期されます。\n");
     }
 
     const body = doc.getBody();
     const today = new Date();
-    const formattedMonth = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy-MM');
+    const weekNum = getWeekNumber_(today);
+    const weekRange = getWeekRange_(today);
+    const formattedWeek = Utilities.formatDate(today, 'Asia/Tokyo', 'yyyy年MM月') + ` 第${weekNum}週 (${weekRange.start}〜${weekRange.end})`;
 
-    // 2. セパレーターと新規月次ヘッダーの追記
+    // 2. セパレーターと新規週次ヘッダーの追記
     body.appendHorizontalRule();
-    const sectionHeader = body.appendParagraph(`■ ${formattedMonth} アーカイブ追加分 (${articles.length}件)`);
+    const sectionHeader = body.appendParagraph(`■ ${formattedWeek} アーカイブ追加分 (${articles.length}件)`);
     sectionHeader.setHeading(DocumentApp.ParagraphHeading.HEADING2)
                  .setFontSize(16)
                  .setBold(true)
@@ -96,19 +130,19 @@ function monthlyDigestJob() {
     doc.saveAndClose();
     
     // 生成完了通知メールの送信
-    sendMonthlyDigestNotification(doc.getUrl(), articles.length);
-    writeLog(functionName, 'success', `Successfully appended monthly digest of ${articles.length} articles to Master Doc.`);
+    sendWeeklyDigestNotification(doc.getUrl(), articles.length, formattedWeek);
+    writeLog(functionName, 'success', `Successfully appended weekly digest of ${articles.length} articles to Master Doc.`);
 
   } catch(error) {
-    console.error("月次ダイジェストの追記に失敗しました:", error);
+    console.error("週次ダイジェストの追記に失敗しました:", error);
     writeLog(functionName, 'error', error.message);
   }
 }
 
 /**
- * 過去30日間の「Good」評価記事、または「興味スコア35以上」の重要記事を抽出します。
+ * 過去7日間の「Good」「read_later」評価記事、または「興味スコア35以上」の重要記事を抽出します。
  */
-function getMonthlyGoodAndImportantArticles() {
+function getWeeklyGoodAndImportantArticles() {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
   const results = [];
   if (!sheet) return results;
@@ -117,16 +151,16 @@ function getMonthlyGoodAndImportantArticles() {
   if (lastRow < 2) return results;
 
   const rows = sheet.getRange(2, 1, lastRow - 1, 15).getValues();
-  const thirtyDaysAgo = new Date();
-  thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
 
   rows.forEach(row => {
     const fetchedAt = new Date(row[1]);
     const score = parseFloat(row[11]) || 0; // interest_score
     const status = row[13].toString().trim(); // status
 
-    // 過去30日以内のデータが対象
-    if (fetchedAt >= thirtyDaysAgo) {
+    // 過去7日以内のデータが対象
+    if (fetchedAt >= sevenDaysAgo) {
       if (status === 'good' || status === 'read_later') {
         results.push({
           title: row[4],
@@ -147,20 +181,26 @@ function getMonthlyGoodAndImportantArticles() {
 }
 
 /**
- * 月次ダイジェストマスターの追記完了を通知するメールを送信します。
+ * 週次ダイジェストマスターの追記完了を通知するメールを送信します。
+ * @param {string} docUrl マスタードキュメントのURL
+ * @param {number} count 追記された記事数
+ * @param {string} weekLabel 週の表示ラベル（例: "2026年06月 第2週 (06/01〜06/07)"）
  */
-function sendMonthlyDigestNotification(docUrl, count) {
+function sendWeeklyDigestNotification(docUrl, count, weekLabel) {
   const email = PropertiesService.getScriptProperties().getProperty('NOTIFY_EMAIL');
   if (!email) return;
 
-  const subject = `[月次レポート] 月次ニュースダイジェストが追記更新されました [${count}件]`;
+  const subject = `[週次レポート] 週次ニュースダイジェストが追記更新されました [${count}件]`;
   const body = `
 Personal News Agent よりお知らせです。
 
-先月1か月間の「Good記事」および「重要ニュース」を集約し、Google ドライブ上のマスターアーカイブに自動追記しました。
+${weekLabel} の「Good記事」および「重要ニュース」を集約し、Google ドライブ上のマスターアーカイブに自動追記しました。
 
 ■ 今回の追記数
 ${count} 件
+
+■ 対象期間
+${weekLabel}
 
 ■ マスタードキュメントのリンクはこちら
 ${docUrl}
@@ -168,7 +208,7 @@ ${docUrl}
 ■ NotebookLM への同期方法
 1. NotebookLM ( https://notebooklm.google.com/ ) を開きます。
 2. 対象のノートブックを開き、ソース一覧にある「Master News Archive」の横に表示される「再同期（Sync）」ボタンを1クリックしてください。
-3. 今回追記された最新のニュースナレッジが、NotebookLMに即座に読み込まれます。
+3. 今週追記された最新のニュースナレッジが、NotebookLMに即座に読み込まれます。
 
 ※ 手動での新規ファイルの追加やコピペは一切不要です！
   `;
