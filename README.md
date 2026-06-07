@@ -37,8 +37,8 @@ flowchart TD
         J["📊 Google Spreadsheet\ninterest_profileシートの\n興味タグ重みを自動更新"]
     end
 
-    subgraph MONTHLY["📅 月次サイクル（月末 自動実行）"]
-        K["⚙️ GAS\nmonthlyDigestJob"]
+    subgraph WEEKLY["📅 週次サイクル（毎週土曜 自動実行）"]
+        K["⚙️ GAS\nweeklyDigestJob"]
         L["📄 Google ドキュメント\n📖 Master News Agent Archive\nGood/あとで読み記事を末尾に自動追記"]
         M["🔬 NotebookLM\nソース再同期（1クリック）\nナレッジベースへ統合"]
     end
@@ -62,7 +62,7 @@ flowchart TD
 配信されたHTMLメール内のアクションリンク（Good/Bad/あとで読む）をクリックすると、スプレッドシート内の興味タグの重みが更新され、次回の探索クエリの生成に反映されるフィードバックループを備えています。
 
 ### 3. NotebookLMとの連携 (Googleドキュメント自動追記)
-ユーザーが「Good」または「あとで読む」と評価した厳選記事のみを、Googleドライブ上の単一のマスタードキュメントの末尾に毎月自動で追記します。NotebookLMのソース画面から「再同期」を1クリックするだけで最新情報を反映できます。
+ユーザーが「Good」または「あとで読む」と評価した厳選記事のみを、Googleドライブ上の単一のマスタードキュメントの末尾に毎週自動で追記します。NotebookLMのソース画面から「再同期」を1クリックするだけで最新情報を反映できます。
 
 ### 4. 誤クリック防止の確認画面 (Web App)
 メール配信システムやメーラーのセキュリティシステムが裏でリンクを自動スキャンし、評価データを汚してしまう（勝手にGood/Badが押される）のを防ぐため、確定ボタンを挟む一時確認画面をGASウェブアプリで提供します。
@@ -88,7 +88,7 @@ news_agent_mvp/
 ├── Sheets.gs              # スプレッドシートDB操作、プロファイル管理、リトライ機能付きAPIラッパー
 ├── Notify.gs              # Gmail HTMLニュースレター配信
 ├── Actions.gs             # Webアプリ doGet(e) 処理（メールクリック時のアクション受付と自動学習）
-└── MonthlyDigest.gs       # 厳選された Good/あとで読む 記事をマスターDocに自動アペンド
+└── WeeklyDigest.gs        # 厳選された Good/あとで読む 記事をマスターDocに週次で自動アペンド
 ```
 
 ---
