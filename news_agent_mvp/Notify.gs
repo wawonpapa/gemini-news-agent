@@ -129,17 +129,18 @@ function sendDailyDigest(articles) {
 
   html += `
         </div>
-
-        <!-- フッター -->
-        <div class="footer">
-          <p>このニュースサマリは自動生成されました。<br>アクションリンクをクリックすると、あなたの興味プロファイルが学習されます。</p>
-          <p>設定・ログの確認は <a href="${SpreadsheetApp.getActiveSpreadsheet().getUrl()}" target="_blank">スプレッドシート</a> を開いてください。</p>
-          <p>© 2026 Personal News Agent MVP</p>
-        </div>
-      </div>
-    </body>
-    </html>
-  `;
+ 
+         <!-- フッター -->
+         <div class="footer">
+           <p style="margin-bottom: 18px;"><a href="${webAppUrl}?action=register_form" target="_blank" style="background-color: #7c3aed; color: #ffffff !important; padding: 10px 20px; border-radius: 8px; font-weight: 700; display: inline-block; box-shadow: 0 4px 10px rgba(124,58,237,0.25); text-decoration: none;">自分で見つけたニュースを登録する &#128221;</a></p>
+           <p>このニュースサマリは自動生成されました。<br>アクションリンクをクリックすると、あなたの興味プロファイルが学習されます。</p>
+           <p>設定・ログの確認は <a href="${SpreadsheetApp.getActiveSpreadsheet().getUrl()}" target="_blank">スプレッドシート</a> を開いてください。</p>
+           <p>© 2026 Personal News Agent MVP</p>
+         </div>
+       </div>
+     </body>
+     </html>
+   `;
 
   // Gmail送信の実行
   GmailApp.sendEmail(
