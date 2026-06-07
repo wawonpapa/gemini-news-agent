@@ -64,7 +64,8 @@ function dailyNewsJob() {
       // 【安全制限】GAS 6分実行制限ガード：5分経過で現在の結果を保存して安全停止
       if (Date.now() - startTime > MAX_EXECUTION_MS) {
         console.warn(`実行時間が5分を超過したため、記事処理を安全に中断します。処理済み: ${processedCount}件`);
-        writeLog(functionName, 'warning', `Execution time limit reached. Processed ${processedCount} articles before safe stop.`);
+        writeLog(functionName, 'warning', `Execution time limit reached. Scheduling retry in 10 minutes.`);
+        scheduleRetry_(); // リトライトリガーを登録
         return;
       }
 
@@ -96,6 +97,14 @@ function dailyNewsJob() {
     });
 
     console.log(`新着自律探索完了。新規保存件数: ${newArticlesSaved.length} 件`);
+
+    // 【安全制限】配信前の実行時間ガード：すでに制限時間を超えている場合は中断してリトライをスケジュール
+    if (Date.now() - startTime > MAX_EXECUTION_MS) {
+      console.warn(`配信処理の前に実行時間が5分を超過したため、中断してリトライを予約します。`);
+      writeLog(functionName, 'warning', `Execution time limit reached before delivery. Scheduling retry in 10 minutes.`);
+      scheduleRetry_();
+      return;
+    }
 
     // 5. 今回取得した記事 ＋ 過去に未通知の記事を統合してスコアリングランキングを作成
     const allPendingArticles = getUnnotifiedArticles();
@@ -137,6 +146,41 @@ function dailyNewsJob() {
     writeLog(functionName, 'error', `ETL Job Failure: ${error.message}`);
     sendErrorAlert(error.message);
     throw error;
+  }
+}
+
+/**
+ * タイムアウト時に10分後の再実行を動的にスケジュールします。
+ */
+function scheduleRetry_() {
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty('RETRY_PENDING') === 'true') return; // 重複登録防止
+  ScriptApp.newTrigger('dailyNewsJobRetry')
+    .timeBased()
+    .after(10 * 60 * 1000) // 10分後
+    .create();
+  props.setProperty('RETRY_PENDING', 'true');
+  console.log('リトライトリガーを10分後に登録しました。');
+}
+
+/**
+ * リトライ用のエントリーポイント。
+ * トリガーを削除し、軽量モードで実行します。
+ */
+function dailyNewsJobRetry() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('RETRY_PENDING');
+  // 使用済みのリトライトリガーを自己削除
+  ScriptApp.getProjectTriggers()
+    .filter(t => t.getHandlerFunction() === 'dailyNewsJobRetry')
+    .forEach(t => ScriptApp.deleteTrigger(t));
+  
+  // 軽量モードフラグをセットして通常ジョブを実行
+  props.setProperty('LITE_MODE', 'true');
+  try {
+    dailyNewsJob();
+  } finally {
+    props.deleteProperty('LITE_MODE');
   }
 }
 

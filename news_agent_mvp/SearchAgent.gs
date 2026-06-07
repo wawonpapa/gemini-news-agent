@@ -26,10 +26,17 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
     queries = [tags.slice(0, 3).join(' ') + ' latest news'];
   }
 
+  // 軽量モードの判定：クエリ数を削減
+  const isLiteMode = PropertiesService.getScriptProperties().getProperty('LITE_MODE') === 'true';
+  if (isLiteMode) {
+    queries = queries.slice(0, 2);
+    console.log('軽量モードで実行: クエリ数を2件に制限します。');
+  }
+
   console.log("探索に使用するクエリ:", queries);
   let allDiscoveredArticles = [];
 
-  // 2. 生成された3つのクエリを個別にGoogle検索ツール（グラウンディング）で実行
+  // 2. 生成されたクエリを個別にGoogle検索ツール（グラウンディング）で実行
   queries.forEach((query, index) => {
     // 【6分制限ガード】残り60秒未満なら探索を安全に打ち切る
     if (startTime && maxExecutionMs) {
@@ -40,12 +47,12 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
       }
     }
     try {
-      console.log(`探索クエリ [${index + 1}/3] 実行中: "${query}"`);
+      console.log(`探索クエリ [${index + 1}/${queries.length}] 実行中: "${query}"`);
       const articles = executeSingleSearchQuery(query, focusDomains);
       allDiscoveredArticles = allDiscoveredArticles.concat(articles);
       
-      // API制限の回避のためのインターバル（3秒に短縮 - 元の10秒から削減）
-      Utilities.sleep(3000);
+      // API制限の回避のためのインターバル（2秒に短縮）
+      Utilities.sleep(2000);
     } catch(err) {
       console.error(`クエリ「${query}」での探索に失敗しました:`, err);
       writeLog(functionName, 'warning', `Search query [${query}] failed: ${err.message}`);
