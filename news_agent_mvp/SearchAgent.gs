@@ -59,15 +59,35 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
     }
   });
 
-  // 3. 発見された全記事を、正規化したURLに基づいて重複排除（ユニーク化）
+  // 3. 発見された全記事を、接続確認および正規化したURLに基づいて重複排除（ユニーク化）
   const seenUrls = new Set();
   const uniqueArticles = [];
 
   allDiscoveredArticles.forEach(art => {
+    // 【安全制限】残り実行時間が60秒未満ならURL検証を打ち切る
+    if (startTime && maxExecutionMs) {
+      if (Date.now() - startTime > maxExecutionMs - 60000) {
+        console.warn('残り時間がわずかなため、以降のURL検証をスキップします。');
+        return;
+      }
+    }
+
+    // URLの生存確認および最終遷移先URLの解決
+    console.log(`URL検証中: ${art.url}`);
+    const finalUrl = validateAndGetFinalUrl(art.url);
+    if (!finalUrl) {
+      console.warn(`アクセス不可または404のためURLを除外しました: ${art.url}`);
+      return; // 除外
+    }
+
+    // 検証後のURLを反映
+    art.url = finalUrl;
     const normUrl = normalizeUrl(art.url);
+
     if (!seenUrls.has(normUrl)) {
       seenUrls.add(normUrl);
       uniqueArticles.push(art);
+      console.log(`URL検証成功 (有効): ${art.url}`);
     } else {
       console.log(`探索内重複URLを除外しました: ${art.url}`);
     }
@@ -155,7 +175,7 @@ Google検索ツールを活用し、検索クエリ「${query}」について、
 ${focusDomains.map(d => `- ${d}`).join('\n')}
 
 【抽出・評価のルール】：
-1. 信頼できる配信元の正確なWebページの「URL」および「サイト名（source）」を抜き出してください。
+1. 信頼できる配信元の正確なWebページの「URL」および「サイト名（source）」を抜き出してください。URLは検索結果（Google Search grounding results）に表示されている実際のURLと一字一句違わずに正確に出力し、絶対にドメインなどからURLを予測・創作（ハルシネーション）しないでください。
 2. その検索キーワードに関する最も新しく、ユーザーにとって付加価値の高い記事を最大6件精選してください。
 3. 各記事のAI要約は、3行程度の簡潔な日本語箇条書きで分かりやすく要約してください。
 4. なぜこの記事を読むべきか、何が面白いのかの選定理由を明快な日本語1文で作成してください。`;
@@ -280,4 +300,70 @@ function fetchWithRetry(url, options, maxRetries = 3, initialDelayMs = 3000) {
     }
   }
   throw new Error("最大再試行回数を超過しました。");
+}
+
+/**
+ * URLに実際にアクセスし、有効性（200 OK）の検証と、リダイレクト解決後の最終URLを取得します。
+ * @param {string} url 検証対象のURL
+ * @return {string|null} 有効な場合は最終URL、無効な場合は null
+ */
+function validateAndGetFinalUrl(url) {
+  if (!url || typeof url !== 'string') return null;
+  if (!url.startsWith('http://') && !url.startsWith('https://')) return null;
+
+  let currentUrl = url;
+  const maxRedirects = 5;
+  let redirectCount = 0;
+
+  try {
+    while (redirectCount < maxRedirects) {
+      const response = UrlFetchApp.fetch(currentUrl, {
+        method: 'get',
+        followRedirects: false, // リダイレクトを自動追従せず手動で追従する
+        muteHttpExceptions: true,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+        }
+      });
+
+      const code = response.getResponseCode();
+
+      // リダイレクト (3xx) の場合、Locationヘッダーから次のURLを取得
+      if (code >= 300 && code < 400) {
+        const headers = response.getHeaders();
+        const nextUrl = headers['Location'] || headers['location'];
+        if (nextUrl) {
+          // 相対パスの解決
+          if (!nextUrl.startsWith('http://') && !nextUrl.startsWith('https://')) {
+            const match = currentUrl.match(/^(https?:\/\/[^\/]+)/);
+            const domain = match ? match[1] : '';
+            if (nextUrl.startsWith('/')) {
+              currentUrl = domain + nextUrl;
+            } else {
+              const basePath = currentUrl.substring(0, currentUrl.lastIndexOf('/') + 1);
+              currentUrl = basePath + nextUrl;
+            }
+          } else {
+            currentUrl = nextUrl;
+          }
+          redirectCount++;
+          continue;
+        }
+      }
+
+      // 200番台は成功（検証通過）
+      if (code >= 200 && code < 300) {
+        return currentUrl;
+      }
+
+      console.warn(`URL検証失敗 (Status: ${code}): ${currentUrl}`);
+      return null;
+    }
+
+    console.warn(`リダイレクト回数が上限に達しました: ${url}`);
+    return null;
+  } catch (e) {
+    console.warn(`URL検証中に例外が発生しました (${currentUrl}): ${e.message}`);
+    return null;
+  }
 }
