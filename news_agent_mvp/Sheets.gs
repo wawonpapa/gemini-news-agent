@@ -291,6 +291,44 @@ function recordReaction(articleId, action, article) {
 }
 
 /**
+ * 過去 dayLimit 日間にユーザーがリアクション（open / good / bad）した記事IDのSetを返します。
+ * Issue #3: リアクション済み記事の重複配信防止に使用。
+ * ※ read_later は「まだ読んでいない」ことを意味するため除外対象にしません（案B）。
+ * @param {number} dayLimit 遡る日数（デフォルト30日）
+ * @return {Set<string>} リアクション済みの article_id の Set
+ */
+function getReactedArticleIdSet(dayLimit) {
+  dayLimit = (dayLimit === undefined) ? 30 : dayLimit;
+  const idSet = new Set();
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('reactions');
+  if (!sheet) return idSet;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return idSet;
+
+  // reactions シートのカラム: [timestamp, article_id, action, url, title, memo]
+  const data = sheet.getRange(2, 1, lastRow - 1, 3).getValues();
+
+  const threshold = new Date();
+  threshold.setDate(threshold.getDate() - dayLimit);
+
+  // read_later は配信リマインダーとして許容するため除外対象に含めない
+  const filteredActions = new Set(['open', 'good', 'bad']);
+
+  data.forEach(function(row) {
+    const reactedAt = new Date(row[0]);
+    const articleId = row[1].toString().trim();
+    const action = row[2].toString().trim();
+
+    if (reactedAt >= threshold && articleId && filteredActions.has(action)) {
+      idSet.add(articleId);
+    }
+  });
+
+  return idSet;
+}
+
+/**
  * 動作ログを logs シートに記録します。
  */
 function writeLog(functionName, status, message) {
