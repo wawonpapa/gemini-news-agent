@@ -216,10 +216,20 @@ function getUnnotifiedArticles() {
   const lastRow = sheet.getLastRow();
   if (lastRow < 2) return pending;
 
+  // 【Issue #3】リアクション済みIDセットを1回だけ取得（open/good/bad が対象、read_laterは除外しない）
+  const reactedIds = getReactedArticleIdSet(30);
+  console.log(`リアクション済みIDキャッシュ（配信除外対象）: ${reactedIds.size} 件`);
+
   const rows = sheet.getRange(2, 1, lastRow - 1, 15).getValues();
   rows.forEach(row => {
     // notified_at列（15列目 / インデックス14）が空、かつステータスが 'new'
     if (!row[14] && row[13].toString().trim() === 'new') {
+      // 【Issue #3】open/good/bad のリアクション済み記事は配信候補から除外する
+      const artId = row[0].toString().trim();
+      if (reactedIds.has(artId)) {
+        console.log(`リアクション済みのため配信候補から除外: ${row[4]}`);
+        return;
+      }
       pending.push({
         article_id: row[0],
         fetched_at: row[1],
@@ -242,6 +252,7 @@ function getUnnotifiedArticles() {
 
   return pending;
 }
+
 
 /**
  * システム実行時の致命的エラーを管理メールアドレス宛にアラート通知します。
