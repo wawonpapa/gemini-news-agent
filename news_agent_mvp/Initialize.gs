@@ -50,7 +50,7 @@ function initSpreadsheet() {
       initialRows: [
         ['daily_limit', '30'], // 1日の要約上限
         ['notify_top_n', '10'], // 配信件数
-        ['gemini_model', 'gemini-3.5-flash'] // 使用AIモデル
+        ['gemini_model', 'gemini-3.1-flash-lite'] // 使用AIモデル
       ]
     },
     {

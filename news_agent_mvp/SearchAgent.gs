@@ -102,7 +102,7 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
  */
 function generateSearchQueries(activeTags) {
   const apiKey = getGeminiApiKey();
-  const modelName = 'gemini-3.5-flash';
+  const modelName = 'gemini-3.1-flash-lite';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
@@ -163,7 +163,7 @@ ${activeTags.join(', ')}
  */
 function executeSingleSearchQuery(query, focusDomains) {
   const apiKey = getGeminiApiKey();
-  const modelName = 'gemini-3.5-flash';
+  const modelName = 'gemini-3.1-flash-lite';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");

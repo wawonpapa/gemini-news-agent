@@ -709,7 +709,7 @@ function createNewsRegistrationForm() {
  */
 function analyzeRegisteredNews(url, title, bodyText, comment) {
   const apiKey = getGeminiApiKey();
-  const modelName = 'gemini-3.5-flash';
+  const modelName = 'gemini-3.1-flash-lite';
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
 
   let prompt = '';
