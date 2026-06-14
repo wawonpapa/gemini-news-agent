@@ -422,6 +422,59 @@ function doGet(e) {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
           }
+          @media (max-width: 480px) {
+            body {
+              padding: 12px 8px;
+            }
+            .card {
+              padding: 24px 16px;
+              border-radius: 16px;
+            }
+            h2 {
+              font-size: 20px;
+            }
+            .article-title {
+              font-size: 17px;
+            }
+            .summary-content, .reason-content {
+              font-size: 14px;
+              padding: 12px 10px;
+            }
+            .summary-label, .reason-label {
+              font-size: 12px;
+            }
+            .btn {
+              padding: 16px;
+              font-size: 16px;
+            }
+            .cancel-btn {
+              padding: 12px;
+              font-size: 14px;
+            }
+            .reason-choice-item {
+              font-size: 15px;
+              padding: 6px 0;
+            }
+            .reason-choice-item input[type="checkbox"] {
+              width: 20px;
+              height: 20px;
+            }
+            .feedback-memo-area {
+              font-size: 14px;
+              padding: 10px 12px;
+            }
+            .tag-edit-item {
+              padding: 8px 12px;
+              font-size: 14px;
+            }
+            .tag-edit-item input[type="checkbox"] {
+              width: 18px;
+              height: 18px;
+            }
+            .tag-text-input {
+              font-size: 14px;
+            }
+          }
         </style>
       </head>
       <body>
@@ -709,7 +762,7 @@ function doGet(e) {
       </body>
       </html>
     `;
-    return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
   }
 
   // --- 2. 「確定」が押された場合は、スプレッドシートへの書き込みを実行 ---
@@ -788,7 +841,7 @@ function doGet(e) {
         </body>
         </html>
       `;
-      return HtmlService.createHtmlOutput(redirectHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+      return HtmlService.createHtmlOutput(redirectHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
     }
 
     // リアクション記録完了画面
@@ -846,7 +899,7 @@ function doGet(e) {
       </body>
       </html>
     `;
-    return HtmlService.createHtmlOutput(successHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    return HtmlService.createHtmlOutput(successHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
 
   } catch (error) {
     writeLog('doGet-ActionError', 'error', error.message);
@@ -879,7 +932,7 @@ function createPremiumHtmlOutput(htmlContent, themeColor) {
     </body>
     </html>
   `;
-  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /**
@@ -1116,6 +1169,25 @@ function createNewsRegistrationForm() {
           color: #4f46e5;
           font-size: 14px;
         }
+        @media (max-width: 480px) {
+          body {
+            padding: 10px;
+          }
+          .card {
+            padding: 24px 20px;
+          }
+          .header h1 {
+            font-size: 20px;
+          }
+          input[type="url"], textarea {
+            font-size: 16px;
+            padding: 12px;
+          }
+          .btn {
+            font-size: 16px;
+            padding: 16px;
+          }
+        }
       </style>
       <script>
         function showLoading() {
@@ -1155,7 +1227,7 @@ function createNewsRegistrationForm() {
     </body>
     </html>
   `;
-  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /**
@@ -1444,6 +1516,39 @@ function createRegistrationSuccessPage(art) {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-8px); }
         }
+        @media (max-width: 480px) {
+          body {
+            padding: 10px;
+          }
+          .card {
+            padding: 24px 16px;
+            border-radius: 16px;
+          }
+          .header h1 {
+            font-size: 20px;
+          }
+          .article-box {
+            padding: 16px;
+            margin-bottom: 20px;
+          }
+          .title {
+            font-size: 16px;
+          }
+          .ai-summary {
+            font-size: 13px;
+          }
+          .reason {
+            font-size: 12px;
+          }
+          .btn-container {
+            flex-direction: column;
+            gap: 10px;
+          }
+          .btn {
+            padding: 12px;
+            font-size: 14px;
+          }
+        }
       </style>
     </head>
     <body>
@@ -1480,7 +1585,7 @@ function createRegistrationSuccessPage(art) {
     </body>
     </html>
   `;
-  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+  return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL).addMetaTag('viewport', 'width=device-width, initial-scale=1');
 }
 
 /**
