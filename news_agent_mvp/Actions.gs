@@ -50,115 +50,26 @@ function doGet(e) {
     const webAppUrl = PropertiesService.getScriptProperties().getProperty('WEB_APP_URL');
     const confirmUrl = `${webAppUrl}?article_id=${articleId}&action=${action}&confirm=true`;
 
-    // ─────────────────────────────────────────────────────────────────────────
-    // 'open' アクション専用: 1ページ完結方式
-    // ─────────────────────────────────────────────────────────────────────────
-    // 【問題】GAS Web アプリの iframe は sandbox 属性に
-    //   allow-top-navigation-by-user-activation が設定されている。
-    //   これにより window.top へのJS遷移は「ユーザーの実クリック操作」がある場合のみ許可され、
-    //   window.onload など自動実行では永遠にブロックされる。
-    // 【解決策】2ページ目を廃止し、このボタンのクリック（User Activation）の瞬間に
-    //   window.top.location.href でニュースサイトへ直接ジャンプ。
-    //   反応の記録は fetch の keepalive オプションでバックグラウンド送信。
-    if (action === 'open') {
-      // JSON.stringify でURL内の特殊文字（スペース等）もJSに安全に埋め込む
-      const safeArticleUrlForJs = JSON.stringify(article.url || '');
-      const safeConfirmUrlForJs = JSON.stringify(confirmUrl);
-      const openHtml = `
-        <!DOCTYPE html>
-        <html>
-        <head>
-          <meta charset="utf-8">
-          <meta name="viewport" content="width=device-width, initial-scale=1">
-          <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
-          <title>記事を開く | News Agent</title>
-          <style>
-            body {
-              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
-              background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%);
-              color: #1e293b; text-align: center; padding: 50px 20px; margin: 0;
-              min-height: 100vh; display: flex; align-items: center; justify-content: center;
-            }
-            .card {
-              max-width: 480px; width: 100%;
-              background: rgba(255,255,255,0.95); backdrop-filter: blur(12px);
-              padding: 40px 30px; border-radius: 24px;
-              box-shadow: 0 20px 40px rgba(15,23,42,0.1);
-              border: 1px solid rgba(255,255,255,0.7);
-            }
-            .icon-header { font-size: 52px; margin-bottom: 24px; animation: bounce 2s infinite; }
-            h2 { margin-top: 0; font-weight: 800; font-size: 24px; color: #0f172a; }
-            .article-title {
-              font-weight: 700; color: #334155; margin: 24px 0 36px 0;
-              font-size: 1.05em; line-height: 1.5; background-color: #f8fafc;
-              padding: 20px; border-radius: 12px; border-left: 5px solid #6366f1; text-align: left;
-            }
-            .btn {
-              display: inline-block; width: 90%; padding: 16px; color: white;
-              background-color: #6366f1; border: none; border-radius: 12px;
-              font-weight: 700; font-size: 1.15em; cursor: pointer;
-              transition: transform 0.2s, box-shadow 0.2s;
-              box-shadow: 0 4px 15px rgba(99,102,241,0.3);
-              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
-            }
-            .btn:hover { transform: translateY(-2px); box-shadow: 0 6px 20px rgba(99,102,241,0.4); }
-            .cancel-btn {
-              display: block; margin-top: 24px; color: #94a3b8; background: none;
-              border: none; font-size: 0.95em; font-weight: 600; cursor: pointer;
-              font-family: 'Outfit', 'Noto Sans JP', sans-serif;
-            }
-            .cancel-btn:hover { color: #64748b; }
-            @keyframes bounce {
-              0%, 100% { transform: translateY(0); } 50% { transform: translateY(-8px); }
-            }
-          </style>
-          <script>
-            function confirmAndOpen() {
-              var articleUrl = ${safeArticleUrlForJs};
-              var confirmUrl = ${safeConfirmUrlForJs};
-              // keepalive: ページ遷移後もリクエストが確実にサーバーへ到達し反応を記録する
-              try { fetch(confirmUrl, { mode: 'no-cors', keepalive: true }); } catch(e) {}
-              // ボタンクリック = User Activation → allow-top-navigation-by-user-activation をクリア
-              window.top.location.href = articleUrl;
-            }
-          </script>
-        </head>
-        <body>
-          <div class="card">
-            <div class="icon-header">↗️</div>
-            <h2>アクションの確認</h2>
-            <div class="article-title">「${article.title}」</div>
-            <button onclick="confirmAndOpen()" class="btn">記事を開いて確定する ↗️</button>
-            <button onclick="window.close();" class="cancel-btn">キャンセル（閉じる）</button>
-          </div>
-        </body>
-        </html>
-      `;
-      return HtmlService.createHtmlOutput(openHtml).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
+    const formattedSummary = (article.ai_summary || '')
+      .split('\n')
+      .map(line => line.trim())
+      .filter(line => line.length > 0)
+      .map(line => line.replace(/^[-・•＊\*]\s*/, ''))
+      .filter(line => line.length > 0)
+      .map(line => `• ${line}`)
+      .join('<br>');
+
+    let tagList = [];
+    if (Array.isArray(article.tags)) {
+      tagList = article.tags;
+    } else if (typeof article.tags === 'string') {
+      tagList = article.tags.split(',').map(t => t.trim());
+    } else if (article.tags) {
+      tagList = [String(article.tags)];
     }
+    tagList = tagList.map(t => t.trim()).filter(t => t.length > 0);
+    const defaultTagsJson = JSON.stringify(tagList);
 
-    let actionLabel = "";
-    let btnColor = "#6366f1";
-    let icon = "🔗";
-
-    if (action === 'good') { 
-      actionLabel = "Good (高評価・学習反映)"; 
-      btnColor = "#10b981"; 
-      icon = "👍";
-    } else if (action === 'bad') { 
-      actionLabel = "Bad (低評価・除外)"; 
-      btnColor = "#ef4444"; 
-      icon = "👎";
-    } else if (action === 'read_later') { 
-      actionLabel = "あとで読む (ブックマーク)"; 
-      btnColor = "#3b82f6"; 
-      icon = "📌";
-    }
-
-    // プレミアムデザイン確認画面 (ボットの先読みクリックを防止)
-    // open と同様に fetch(keepalive) + window.top.location.href の1クリック完結方式に統一
-    const safeArticleUrlForJs = JSON.stringify(article.url || '');
-    const safeConfirmUrlForJs = JSON.stringify(confirmUrl);
     const html = `
       <!DOCTYPE html>
       <html>
@@ -168,102 +79,560 @@ function doGet(e) {
         <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;600;800&family=Noto+Sans+JP:wght@400;700&display=swap" rel="stylesheet">
         <title>アクションの確定 | News Agent</title>
         <style>
-          body { 
-            font-family: 'Outfit', 'Noto Sans JP', sans-serif; 
-            background: linear-gradient(135deg, #f1f5f9 0%, #cbd5e1 100%); 
-            color: #1e293b; 
-            text-align: center; 
-            padding: 50px 20px; 
+          body {
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+            color: #1e293b;
             margin: 0;
+            padding: 24px 16px;
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
+            box-sizing: border-box;
           }
-          .card { 
-            max-width: 480px; 
+          .card {
+            max-width: 480px;
             width: 100%;
-            background: rgba(255, 255, 255, 0.95); 
+            background: rgba(255, 255, 255, 0.9);
             backdrop-filter: blur(12px);
-            padding: 40px 30px; 
-            border-radius: 24px; 
-            box-shadow: 0 20px 40px rgba(15,23,42,0.1); 
-            border: 1px solid rgba(255,255,255,0.7);
+            -webkit-backdrop-filter: blur(12px);
+            padding: 32px 24px;
+            border-radius: 24px;
+            box-shadow: 0 20px 40px rgba(15, 23, 42, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.6);
+            box-sizing: border-box;
           }
           .icon-header {
-            font-size: 52px;
-            margin-bottom: 24px;
-            animation: bounce 2s infinite;
+            font-size: 48px;
+            margin-bottom: 16px;
+            text-align: center;
           }
-          h2 { margin-top: 0; font-weight: 800; font-size: 24px; color: #0f172a; }
-          .title { 
-            font-weight: 700; 
-            color: #334155; 
-            margin: 24px 0 36px 0; 
-            font-size: 1.1em; 
-            line-height: 1.5; 
+          h2 {
+            margin-top: 0;
+            font-weight: 800;
+            font-size: 22px;
+            color: #0f172a;
+            text-align: center;
+            margin-bottom: 8px;
+          }
+          .eval-subtitle {
+            font-size: 14px;
+            color: #64748b;
+            text-align: center;
+            margin-bottom: 24px;
+          }
+          .article-card {
             background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 16px;
             padding: 20px;
-            border-radius: 12px;
-            border-left: 5px solid ${btnColor};
+            margin-bottom: 24px;
             text-align: left;
           }
-          .btn { 
-            display: inline-block; 
-            width: 90%; 
-            padding: 16px; 
-            color: white; 
-            background-color: ${btnColor}; 
-            border: none;
-            border-radius: 12px; 
-            font-weight: 700; 
-            font-size: 1.15em;
-            cursor: pointer;
-            transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s; 
-            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+          .article-source-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 12px;
           }
-          .btn:hover { 
+          .source-badge {
+            font-size: 11px;
+            font-weight: 700;
+            color: #4f46e5;
+            background-color: #eef2ff;
+            padding: 4px 10px;
+            border-radius: 99px;
+            text-transform: uppercase;
+          }
+          .importance-badge {
+            font-size: 11px;
+            font-weight: 700;
+            color: #059669;
+            background-color: #d1fae5;
+            padding: 4px 10px;
+            border-radius: 99px;
+          }
+          .article-title {
+            font-weight: 800;
+            font-size: 16px;
+            color: #1e293b;
+            line-height: 1.4;
+            margin-bottom: 16px;
+          }
+          .summary-label, .reason-label {
+            font-size: 12px;
+            font-weight: 700;
+            color: #64748b;
+            margin-top: 14px;
+            margin-bottom: 6px;
+            text-transform: uppercase;
+          }
+          .summary-content, .reason-content {
+            font-size: 13px;
+            color: #334155;
+            line-height: 1.6;
+          }
+          .summary-content {
+            background-color: #ffffff;
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #f1f5f9;
+          }
+          .reason-content {
+            background-color: #eff6ff;
+            color: #1e40af;
+            padding: 10px 12px;
+            border-radius: 8px;
+          }
+          .btn {
+            display: block;
+            width: 100%;
+            padding: 14px;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            font-weight: 700;
+            font-size: 15px;
+            cursor: pointer;
+            transition: transform 0.2s, box-shadow 0.2s, opacity 0.2s;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            text-align: center;
+            box-sizing: border-box;
+          }
+          .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 6px 20px rgba(0,0,0,0.15);
             opacity: 0.95;
           }
-          .cancel { 
-            display: block; 
-            margin-top: 24px; 
-            color: #94a3b8; 
+          .btn-primary {
+            background: linear-gradient(135deg, #4f46e5 0%, #7c3aed 100%);
+            box-shadow: 0 4px 15px rgba(79, 70, 229, 0.25);
+          }
+          .btn-primary:hover {
+            box-shadow: 0 6px 20px rgba(79, 70, 229, 0.35);
+          }
+          .btn-good {
+            background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+            box-shadow: 0 4px 15px rgba(16, 185, 129, 0.25);
+          }
+          .btn-good:hover {
+            box-shadow: 0 6px 20px rgba(16, 185, 129, 0.35);
+          }
+          .btn-bad {
+            background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+            box-shadow: 0 4px 15px rgba(244, 63, 94, 0.25);
+          }
+          .btn-bad:hover {
+            box-shadow: 0 6px 20px rgba(244, 63, 94, 0.35);
+          }
+          .btn-later {
+            background: linear-gradient(135deg, #0ea5e9 0%, #0284c7 100%);
+            box-shadow: 0 4px 15px rgba(14, 165, 233, 0.25);
+          }
+          .btn-later:hover {
+            box-shadow: 0 6px 20px rgba(14, 165, 233, 0.35);
+          }
+          .btn-secondary {
+            background-color: #64748b;
+            box-shadow: 0 4px 15px rgba(100, 116, 139, 0.25);
+          }
+          .cancel-btn {
+            display: block;
+            width: 100%;
+            margin-top: 16px;
+            color: #94a3b8;
             background: none;
             border: none;
-            font-size: 0.95em; 
+            font-size: 13px;
             font-weight: 600;
             cursor: pointer;
             font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            text-align: center;
           }
-          .cancel:hover { color: #64748b; }
+          .cancel-btn:hover {
+            color: #64748b;
+          }
+          .eval-buttons {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 24px;
+          }
+          .eval-buttons .btn {
+            flex: 1;
+          }
+
+          /* Collapsible Tags Section */
+          .collapsible-section {
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            overflow: hidden;
+            background-color: #f8fafc;
+            margin-top: 20px;
+          }
+          .collapsible-trigger {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            width: 100%;
+            padding: 12px 16px;
+            background: none;
+            border: none;
+            font-size: 13px;
+            font-weight: 700;
+            color: #4f46e5;
+            cursor: pointer;
+            text-align: left;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+          }
+          .collapsible-content {
+            padding: 0 16px 16px 16px;
+            border-top: 1px solid #f1f5f9;
+          }
+          .tags-editor-desc {
+            font-size: 11px;
+            color: #64748b;
+            margin-top: 8px;
+            margin-bottom: 12px;
+            line-height: 1.4;
+          }
+          .tag-edit-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            background-color: #ffffff;
+            padding: 6px 10px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+          }
+          .tag-edit-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #4f46e5;
+          }
+          .tag-text-input {
+            flex: 1;
+            border: none;
+            background: none;
+            padding: 2px 4px;
+            font-size: 13px;
+            color: #334155;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+          }
+          .tag-text-input:focus {
+            outline: 1px solid #cbd5e1;
+            border-radius: 4px;
+            background-color: #f8fafc;
+          }
+          .add-tag-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 12px;
+          }
+          .add-tag-row input[type="text"] {
+            flex: 1;
+            padding: 8px 12px;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            font-size: 12px;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+          }
+          .btn-add-tag {
+            padding: 8px 14px;
+            background-color: #4f46e5;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+          }
+          .btn-add-tag:hover {
+            background-color: #4338ca;
+          }
+          .no-tags-msg {
+            font-size: 12px;
+            color: #94a3b8;
+            text-align: center;
+            padding: 8px;
+          }
+          .complete-message {
+            font-size: 14px;
+            color: #475569;
+            line-height: 1.6;
+            text-align: center;
+            margin-bottom: 28px;
+          }
+          .article-title-simple {
+            font-size: 15px;
+            font-weight: 700;
+            color: #334155;
+            background-color: #f1f5f9;
+            padding: 14px;
+            border-radius: 8px;
+            margin-bottom: 24px;
+            text-align: left;
+          }
           @keyframes bounce {
             0%, 100% { transform: translateY(0); }
-            50% { transform: translateY(-8px); }
+            50% { transform: translateY(-6px); }
           }
         </style>
-        <script>
-          function confirmAndGo() {
-            var articleUrl = ${safeArticleUrlForJs};
-            var confirmUrl = ${safeConfirmUrlForJs};
-            // keepalive: ページ遷移後もリクエストが確実にサーバーへ到達し反応を記録する
-            try { fetch(confirmUrl, { mode: 'no-cors', keepalive: true }); } catch(e) {}
-            // ボタンクリック = User Activation → sandbox の allow-top-navigation-by-user-activation をクリア
-            window.top.location.href = articleUrl;
-          }
-        </script>
       </head>
       <body>
         <div class="card">
-          <div class="icon-header">${icon}</div>
-          <h2>アクションの確認</h2>
-          <div class="title">「${article.title}」</div>
-          <button onclick="confirmAndGo()" class="btn">${actionLabel} を確定する</button>
-          <button onclick="window.close();" class="cancel">キャンセル（閉じる）</button>
+          <!-- Mode 1: Read Mode -->
+          <div id="read-mode" style="display: none;">
+            <div class="icon-header">&#128214;</div>
+            <h2>ニュースを読む</h2>
+            <div class="article-card">
+              <div class="article-source-row">
+                <span class="source-badge">${article.source}</span>
+                <span class="importance-badge">重要度: ${article.importance}/5</span>
+              </div>
+              <div class="article-title">「${article.title}」</div>
+              <div class="summary-label">&#128203; AI要約</div>
+              <div class="summary-content">${formattedSummary}</div>
+              <div class="reason-label">&#128161; 選定理由</div>
+              <div class="reason-content">${article.reason}</div>
+            </div>
+            <button onclick="openArticle()" class="btn btn-primary">記事を読む &#8599;</button>
+            <button onclick="window.close();" class="cancel-btn">閉じる</button>
+          </div>
+
+          <!-- Mode 2: Evaluation Mode -->
+          <div id="eval-mode" style="display: none;">
+            <div class="icon-header">&#9997;</div>
+            <h2>この記事はいかがでしたか？</h2>
+            <p class="eval-subtitle">評価と興味タグの調整を行ってください。</p>
+            
+            <div class="eval-buttons">
+              <button onclick="submitEvaluation('good')" class="btn btn-good">&#128077; Good</button>
+              <button onclick="submitEvaluation('bad')" class="btn btn-bad">&#128078; Bad</button>
+            </div>
+            
+            <div class="collapsible-section">
+              <button onclick="toggleTags()" class="collapsible-trigger">
+                <span>&#127991; 学習対象タグの調整 (任意)</span>
+                <span id="collapsible-chevron">&#9660;</span>
+              </button>
+              <div id="tags-editor-panel" class="collapsible-content" style="display: none;">
+                <div class="tags-editor-desc">
+                  チェックを入れたタグが学習対象になります。テキストを編集して変更することもできます。
+                </div>
+                <div id="tags-list-container"></div>
+                <div class="add-tag-row">
+                  <input type="text" id="new-tag-input" placeholder="新しいタグを追加..." />
+                  <button type="button" onclick="addNewTag()" class="btn-add-tag">追加</button>
+                </div>
+              </div>
+            </div>
+            <button onclick="window.close();" class="cancel-btn">戻る（評価しない）</button>
+          </div>
+
+          <!-- Mode 3: Read Later Mode -->
+          <div id="later-mode" style="display: none;">
+            <div class="icon-header">&#128204;</div>
+            <h2>あとで読む</h2>
+            <div class="article-title-simple">「${article.title}」</div>
+            <button onclick="confirmReadLater()" class="btn btn-later">あとで読む（ブックマーク）を確定する</button>
+            <button onclick="window.close();" class="cancel-btn">キャンセル</button>
+          </div>
+
+          <!-- Mode 4: Complete Mode -->
+          <div id="complete-mode" style="display: none;">
+            <div class="icon-header">&#127881;</div>
+            <h2>評価を登録しました</h2>
+            <p class="complete-message">ご協力ありがとうございました。<br>興味プロファイルの学習に反映されました。</p>
+            <button onclick="window.close();" class="btn btn-secondary">閉じる</button>
+          </div>
         </div>
+
+        <script>
+          var ARTICLE_ID = ${JSON.stringify(articleId)};
+          var ARTICLE_URL = ${JSON.stringify(article.url || '')};
+          var INITIAL_ACTION = ${JSON.stringify(action)};
+          var CONFIRM_URL = ${JSON.stringify(confirmUrl)};
+          var WEB_APP_URL = ${JSON.stringify(webAppUrl)};
+          var DEFAULT_TAGS = ${defaultTagsJson};
+
+          var localTags = [];
+          DEFAULT_TAGS.forEach(function(tag) {
+            if (tag.trim()) {
+              localTags.push({ name: tag.trim(), checked: true });
+            }
+          });
+
+          window.addEventListener('DOMContentLoaded', function() {
+            renderTags();
+
+            if (INITIAL_ACTION === 'open') {
+              if (sessionStorage.getItem('opened_' + ARTICLE_ID)) {
+                showEvaluationMode();
+              } else {
+                showReadMode();
+              }
+            } else if (INITIAL_ACTION === 'good' || INITIAL_ACTION === 'bad') {
+              showEvaluationMode();
+            } else if (INITIAL_ACTION === 'read_later') {
+              showLaterMode();
+            }
+          });
+
+          window.addEventListener('pageshow', function(event) {
+            if (INITIAL_ACTION === 'open' && sessionStorage.getItem('opened_' + ARTICLE_ID)) {
+              showEvaluationMode();
+            }
+          });
+
+          function showReadMode() {
+            hideAllModes();
+            document.getElementById('read-mode').style.display = 'block';
+          }
+
+          function showEvaluationMode() {
+            hideAllModes();
+            document.getElementById('eval-mode').style.display = 'block';
+          }
+
+          function showLaterMode() {
+            hideAllModes();
+            document.getElementById('later-mode').style.display = 'block';
+          }
+
+          function showComplete() {
+            sessionStorage.removeItem('opened_' + ARTICLE_ID);
+            hideAllModes();
+            document.getElementById('complete-mode').style.display = 'block';
+          }
+
+          function hideAllModes() {
+            document.getElementById('read-mode').style.display = 'none';
+            document.getElementById('eval-mode').style.display = 'none';
+            document.getElementById('later-mode').style.display = 'none';
+            document.getElementById('complete-mode').style.display = 'none';
+          }
+
+          function openArticle() {
+            sessionStorage.setItem('opened_' + ARTICLE_ID, 'true');
+            try {
+              fetch(CONFIRM_URL, { mode: 'no-cors', keepalive: true });
+            } catch(e) {}
+            window.top.location.href = ARTICLE_URL;
+          }
+
+          function confirmReadLater() {
+            window.top.location.href = CONFIRM_URL;
+          }
+
+          function toggleTags() {
+            var panel = document.getElementById('tags-editor-panel');
+            var chevron = document.getElementById('collapsible-chevron');
+            if (panel.style.display === 'none') {
+              panel.style.display = 'block';
+              chevron.innerHTML = '&#9650;';
+            } else {
+              panel.style.display = 'none';
+              chevron.innerHTML = '&#9660;';
+            }
+          }
+
+          function renderTags() {
+            var container = document.getElementById('tags-list-container');
+            container.innerHTML = '';
+            if (localTags.length === 0) {
+              container.innerHTML = '<div class="no-tags-msg">タグがありません</div>';
+              return;
+            }
+            localTags.forEach(function(tagObj, idx) {
+              var item = document.createElement('div');
+              item.className = 'tag-edit-item';
+              
+              var checkbox = document.createElement('input');
+              checkbox.type = 'checkbox';
+              checkbox.id = 'tag-chk-' + idx;
+              checkbox.checked = tagObj.checked;
+              checkbox.onchange = function() {
+                tagObj.checked = checkbox.checked;
+              };
+              
+              var input = document.createElement('input');
+              input.type = 'text';
+              input.className = 'tag-text-input';
+              input.value = tagObj.name;
+              input.placeholder = "タグ名";
+              input.onchange = function() {
+                tagObj.name = input.value.trim();
+              };
+              
+              item.appendChild(checkbox);
+              item.appendChild(input);
+              container.appendChild(item);
+            });
+          }
+
+          function addNewTag() {
+            var input = document.getElementById('new-tag-input');
+            var val = input.value.trim();
+            if (val) {
+              localTags.push({ name: val, checked: true });
+              input.value = '';
+              renderTags();
+            }
+          }
+
+          function getSelectedTags() {
+            var tags = [];
+            localTags.forEach(function(tagObj) {
+              if (tagObj.checked && tagObj.name.trim()) {
+                tags.push(tagObj.name.trim());
+              }
+            });
+            return tags;
+          }
+
+          function submitEvaluation(action) {
+            var tags = getSelectedTags();
+            var btns = document.querySelectorAll('#eval-mode .btn');
+            btns.forEach(function(b) { b.disabled = true; });
+            
+            google.script.run
+              .withSuccessHandler(function() {
+                showComplete();
+              })
+              .withFailureHandler(function(err) {
+                console.warn("google.script.run failed, falling back to form submit:", err);
+                fallbackSubmit(action, tags);
+              })
+              .submitEvaluationWithTags(ARTICLE_ID, action, tags);
+          }
+
+          function fallbackSubmit(action, tags) {
+            var form = document.createElement('form');
+            form.method = 'GET';
+            form.action = WEB_APP_URL;
+            
+            var params = [
+              ['action', action],
+              ['article_id', ARTICLE_ID],
+              ['confirm', 'true'],
+              ['tags', tags.join(',')]
+            ];
+            
+            params.forEach(function(p) {
+              var input = document.createElement('input');
+              input.type = 'hidden';
+              input.name = p[0];
+              input.value = p[1];
+              form.appendChild(input);
+            });
+            
+            document.body.appendChild(form);
+            form.submit();
+          }
+        </script>
       </body>
       </html>
     `;
@@ -283,12 +652,19 @@ function doGet(e) {
       var delta = (action === 'good') ? 1 : -1;
       
       var articleTags = [];
-      if (Array.isArray(article.tags)) {
-        articleTags = article.tags;
-      } else if (typeof article.tags === 'string') {
-        articleTags = article.tags.split(',').map(function(t) { return t.trim(); });
-      } else if (article.tags) {
-        articleTags = [String(article.tags)];
+      const userTags = e.parameter.tags;
+      if (userTags !== undefined) {
+        // フォールバック時のユーザー編集済みタグを使用
+        articleTags = userTags.split(',').map(function(t) { return t.trim(); }).filter(function(t) { return t.length > 0; });
+      } else {
+        // 通常のデフォルトタグを使用
+        if (Array.isArray(article.tags)) {
+          articleTags = article.tags;
+        } else if (typeof article.tags === 'string') {
+          articleTags = article.tags.split(',').map(function(t) { return t.trim(); });
+        } else if (article.tags) {
+          articleTags = [String(article.tags)];
+        }
       }
       
       var filteredTags = articleTags.filter(function(t) { return t.trim().length > 0; });
@@ -297,6 +673,11 @@ function doGet(e) {
         filteredTags.forEach(function(tag) { tagDelta[tag] = delta; });
         updateInterestWeights(tagDelta);
         console.log(`興味プロファイルを自動学習更新しました (action: ${action}, tags: ${filteredTags.join(', ')})`);
+      }
+
+      // articles シートのタグ情報も更新する（フォールバック時）
+      if (userTags !== undefined) {
+        updateArticleTags(articleId, filteredTags);
       }
     }
 
@@ -1027,3 +1408,45 @@ function createRegistrationSuccessPage(art) {
   `;
   return HtmlService.createHtmlOutput(html).setXFrameOptionsMode(HtmlService.XFrameOptionsMode.ALLOWALL);
 }
+
+/**
+ * フロントエンドから google.script.run で呼ばれる評価送信関数。
+ * ユーザーが編集・選択したタグを使って、リアクション記録と興味プロファイル学習を行う。
+ * @param {string} articleId
+ * @param {string} action 'good' または 'bad'
+ * @param {Array<string>} tags ユーザーが編集・選択したタグの配列
+ */
+function submitEvaluationWithTags(articleId, action, tags) {
+  const article = getArticleById(articleId);
+  if (!article) throw new Error('記事が見つかりません: ' + articleId);
+
+  // リアクション記録
+  recordReaction(articleId, action, article);
+  
+  // ステータスの確定
+  updateArticleStatus(articleId, action);
+
+  // 興味プロファイルの重み更新（ユーザー編集済みタグで）
+  const delta = (action === 'good') ? 1 : -1;
+  const tagDelta = {};
+  
+  // 安全性のためのフィルタリング
+  if (tags && Array.isArray(tags)) {
+    tags.map(t => t.trim()).filter(t => t.length > 0).forEach(t => {
+      tagDelta[t] = delta;
+    });
+  }
+  
+  if (Object.keys(tagDelta).length > 0) {
+    updateInterestWeights(tagDelta);
+  }
+
+  // articles シートのタグ情報も更新
+  if (tags && Array.isArray(tags)) {
+    updateArticleTags(articleId, tags.map(t => t.trim()).filter(t => t.length > 0));
+  }
+
+  writeLog('submitEvaluationWithTags', 'success',
+    `action: ${action}, articleId: ${articleId}, tags: ${tags ? tags.join(', ') : ''}`);
+}
+

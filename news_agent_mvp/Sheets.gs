@@ -429,3 +429,25 @@ function cleanupOldLogs() {
   
   console.log(`ログのクリーンアップ完了。残した行数: ${keepRows.length}, 削除した行数: ${excessRows}`);
 }
+
+/**
+ * articles シートの指定記事の tags カラムをユーザー編集済みの値で上書きします。
+ * @param {string} articleId
+ * @param {Array<string>} newTags
+ */
+function updateArticleTags(articleId, newTags) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const ids = sheet.getRange(2, 1, lastRow - 1, 1).getValues().map(row => row[0].toString());
+  const index = ids.indexOf(articleId);
+  if (index !== -1) {
+    const rowNum = index + 2;
+    // tags列は10列目
+    sheet.getRange(rowNum, 10).setValue(newTags.join(', '));
+  }
+}
+
