@@ -375,6 +375,49 @@ function doGet(e) {
             margin-bottom: 24px;
             text-align: left;
           }
+          .feedback-reason-section {
+            text-align: left;
+            margin-bottom: 20px;
+            background-color: #f8fafc;
+            border: 1px solid #e2e8f0;
+            border-radius: 12px;
+            padding: 16px;
+          }
+          .reason-choices {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            margin-bottom: 12px;
+          }
+          .reason-choice-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 13px;
+            color: #334155;
+            cursor: pointer;
+          }
+          .reason-choice-item input[type="checkbox"] {
+            width: 16px;
+            height: 16px;
+            cursor: pointer;
+            accent-color: #4f46e5;
+          }
+          .feedback-memo-area {
+            width: 100%;
+            border: 1px solid #cbd5e1;
+            border-radius: 8px;
+            padding: 8px 12px;
+            font-size: 12px;
+            color: #334155;
+            font-family: 'Outfit', 'Noto Sans JP', sans-serif;
+            resize: vertical;
+            box-sizing: border-box;
+          }
+          .feedback-memo-area:focus {
+            outline: 1px solid #4f46e5;
+            background-color: #ffffff;
+          }
           @keyframes bounce {
             0%, 100% { transform: translateY(0); }
             50% { transform: translateY(-6px); }
@@ -411,6 +454,25 @@ function doGet(e) {
             <div class="eval-buttons">
               <button onclick="submitEvaluation('good')" class="btn btn-good">&#128077; Good</button>
               <button onclick="submitEvaluation('bad')" class="btn btn-bad">&#128078; Bad</button>
+            </div>
+            
+            <div class="feedback-reason-section">
+              <div class="summary-label">&#128172; 理由・メモ (任意)</div>
+              <div class="reason-choices">
+                <label class="reason-choice-item">
+                  <input type="checkbox" name="reason-opt" value="リンク切れ(404)" />
+                  <span>リンク切れ (404)</span>
+                </label>
+                <label class="reason-choice-item">
+                  <input type="checkbox" name="reason-opt" value="有料制限" />
+                  <span>有料記事 (制限あり)</span>
+                </label>
+                <label class="reason-choice-item">
+                  <input type="checkbox" name="reason-opt" value="重複" />
+                  <span>重複ニュース</span>
+                </label>
+              </div>
+              <textarea id="feedback-memo" class="feedback-memo-area" placeholder="具体的な理由やメモをご自由に入力してください..." rows="2"></textarea>
             </div>
             
             <div class="collapsible-section">
@@ -595,6 +657,16 @@ function doGet(e) {
 
           function submitEvaluation(action) {
             var tags = getSelectedTags();
+            
+            // 理由・メモの収集
+            var selectedOpts = [];
+            var checkboxes = document.querySelectorAll('input[name="reason-opt"]:checked');
+            checkboxes.forEach(function(cb) {
+              selectedOpts.push('[' + cb.value + ']');
+            });
+            var textareaVal = document.getElementById('feedback-memo').value.trim();
+            var memo = selectedOpts.join('') + (textareaVal ? (selectedOpts.length ? ' ' : '') + textareaVal : '');
+
             var btns = document.querySelectorAll('#eval-mode .btn');
             btns.forEach(function(b) { b.disabled = true; });
             
@@ -604,12 +676,12 @@ function doGet(e) {
               })
               .withFailureHandler(function(err) {
                 console.warn("google.script.run failed, falling back to form submit:", err);
-                fallbackSubmit(action, tags);
+                fallbackSubmit(action, tags, memo);
               })
-              .submitEvaluationWithTags(ARTICLE_ID, action, tags);
+              .submitEvaluationWithTags(ARTICLE_ID, action, tags, memo);
           }
 
-          function fallbackSubmit(action, tags) {
+          function fallbackSubmit(action, tags, memo) {
             var form = document.createElement('form');
             form.method = 'GET';
             form.action = WEB_APP_URL;
@@ -618,7 +690,8 @@ function doGet(e) {
               ['action', action],
               ['article_id', ARTICLE_ID],
               ['confirm', 'true'],
-              ['tags', tags.join(',')]
+              ['tags', tags.join(',')],
+              ['memo', memo || '']
             ];
             
             params.forEach(function(p) {
@@ -641,7 +714,8 @@ function doGet(e) {
 
   // --- 2. 「確定」が押された場合は、スプレッドシートへの書き込みを実行 ---
   try {
-    recordReaction(articleId, action, article);
+    const memo = e.parameter.memo;
+    recordReaction(articleId, action, article, memo);
     
     // ステータスの確定
     const finalStatus = (action === 'open') ? 'opened' : action;
@@ -1415,13 +1489,14 @@ function createRegistrationSuccessPage(art) {
  * @param {string} articleId
  * @param {string} action 'good' または 'bad'
  * @param {Array<string>} tags ユーザーが編集・選択したタグの配列
+ * @param {string} memo フィードバックの理由・メモ
  */
-function submitEvaluationWithTags(articleId, action, tags) {
+function submitEvaluationWithTags(articleId, action, tags, memo) {
   const article = getArticleById(articleId);
   if (!article) throw new Error('記事が見つかりません: ' + articleId);
 
-  // リアクション記録
-  recordReaction(articleId, action, article);
+  // リアクション記録（理由・メモ付き）
+  recordReaction(articleId, action, article, memo);
   
   // ステータスの確定
   updateArticleStatus(articleId, action);
@@ -1447,6 +1522,6 @@ function submitEvaluationWithTags(articleId, action, tags) {
   }
 
   writeLog('submitEvaluationWithTags', 'success',
-    `action: ${action}, articleId: ${articleId}, tags: ${tags ? tags.join(', ') : ''}`);
+    `action: ${action}, articleId: ${articleId}, tags: ${tags ? tags.join(', ') : ''}, memo: ${memo || ''}`);
 }
 

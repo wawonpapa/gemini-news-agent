@@ -275,8 +275,12 @@ function updateArticleStatus(articleId, status) {
 
 /**
  * ユーザーのリアクション履歴を reactions シートに記録します。
+ * @param {string} articleId
+ * @param {string} action
+ * @param {Object} article
+ * @param {string} memo フィードバックの理由・メモ
  */
-function recordReaction(articleId, action, article) {
+function recordReaction(articleId, action, article, memo) {
   const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('reactions');
   if (!sheet) return;
 
@@ -286,7 +290,7 @@ function recordReaction(articleId, action, article) {
     action,
     article.url || '',
     article.title || '',
-    '' // メモは初期空欄
+    memo || '' // フィードバックの理由・メモを記録
   ]);
 }
 
