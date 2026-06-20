@@ -23,7 +23,8 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
   } catch(e) {
     console.error("検索クエリ生成エラー。フォールバックとしてデフォルトの検索を実行します:", e);
     // フォールバック: 重みの高い上位タグをスペース区切りで連結したクエリ
-    queries = [tags.slice(0, 3).join(' ') + ' latest news'];
+    const fallbackTagNames = tags.map(t => typeof t === 'object' ? t.tag : t);
+    queries = [fallbackTagNames.slice(0, 3).join(' ') + ' latest news'];
   }
 
   // 軽量モードの判定：クエリ数を削減
@@ -107,16 +108,26 @@ function generateSearchQueries(activeTags) {
 
   const todayStr = Utilities.formatDate(new Date(), "Asia/Tokyo", "yyyy/MM/dd");
 
+  // activeTags は [{tag: string, weight: number}] または string[]
+  const tagsText = activeTags.map(t => {
+    if (typeof t === 'object') {
+      return `${t.tag} (優先度スコア: ${t.weight})`;
+    }
+    return t;
+  }).join(', ');
+
   const prompt = `あなたは非常に優秀なニュース検索クエリ生成エージェントです。
 指示基準日「${todayStr}」において、以下のユーザーの興味タグに関する過去24時間以内の最新ニュース、重要なテックブログ、新技術発表をWeb上で発見するための、英語の具体的で明確な「Google検索用クエリ（検索窓に入力する文字列）」を正確に3個生成してください。
 
-興味タグ：
-${activeTags.join(', ')}
+興味タグ（優先度スコア付き。1〜10で、高いほど関心が強い）：
+${tagsText}
 
 【生成のルール】：
-1. タグごとに異なるテーマ（例: ゲーム、AIエージェント、半導体など）が均等にカバーされるよう、それぞれ独自の焦点を持ったクエリを作ってください。
-2. 過去24時間の最新記事を探すため、"latest news 2026"、"new release 2026" などのワードや、具体的な業界トレンドワードを適切に含めてください。
-3. 出力は必ず以下のJSONスキーマに従い、余計な説明文は一切含めないでください。`;
+1. 優先度スコアが高いタグ（特に関心の強い分野）に関連するテーマを優先的に採用し、クエリを作成してください。
+2. もし優先度スコアが低いタグ（スコア1〜2のタグ。例：「[タグ名] (優先度スコア: 2)」など）がリストに含まれている場合は、セレンディピティ向上のため、3つのクエリのうち1つでその低スコアタグのテーマを意図的に採用してクエリを作成してください。
+3. 3個のクエリ全体で同じタグばかりが偏って使われないよう、異なるテーマ（例: ゲーム、AIエージェント、半導体など）がバランスよくカバーされるようにしてください。
+4. 過去24時間の最新記事を探すため、"latest news 2026"、"new release 2026" などのワードや、具体的な業界トレンドワードを適切に含めてください。
+5. 出力は必ず以下のJSONスキーマに従い、余計な説明文は一切含めないでください。`;
 
   const responseSchema = {
     type: "OBJECT",

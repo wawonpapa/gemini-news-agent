@@ -18,21 +18,41 @@ function dailyNewsJob() {
     // 1. スプレッドシートから現在の「興味タグ」および「優先ドメイン」を読み込む
     const profileMap = getInterestProfileMap();
     
-    // 重みが 1 以上のタグを探索のキーワードとする
-    const activeTags = Object.keys(profileMap).filter(tag => profileMap[tag] >= 1);
+    // 重みが 3 以上のタグをメイン探索キーワードとし、重みの降順（高い順）でソート
+    const sortedActiveTags = Object.keys(profileMap)
+      .filter(tag => profileMap[tag] >= 3)
+      .sort((a, b) => profileMap[b] - profileMap[a]);
+    
+    // 上位15件に制限
+    const topActiveTags = sortedActiveTags.slice(0, 15);
+
+    // 重みが 1 以上 3 未満のタグを低スコアタグとする
+    const lowScoreTags = Object.keys(profileMap).filter(tag => profileMap[tag] >= 1 && profileMap[tag] < 3);
     const focusDomains = getFocusDomains();
 
-    if (activeTags.length === 0) {
+    if (topActiveTags.length === 0 && lowScoreTags.length === 0) {
       writeLog(functionName, 'warning', '有効な興味タグが登録されていません。ジョブを休止します。');
       return;
     }
 
-    console.log("探索キーワードタグ:", activeTags);
+    // AIに渡す重み付きタグリストを構築
+    let selectedTags = topActiveTags.map(tag => ({ tag: tag, weight: profileMap[tag] }));
+
+    // 確率的ブレンド (20%の確率で低スコアタグから1つブレンドする)
+    const BLEND_PROBABILITY = 0.20;
+    if (lowScoreTags.length > 0 && Math.random() < BLEND_PROBABILITY) {
+      const randomIndex = Math.floor(Math.random() * lowScoreTags.length);
+      const blendTag = lowScoreTags[randomIndex];
+      selectedTags.push({ tag: blendTag, weight: profileMap[blendTag] });
+      console.log(`【セレンディピティ】低スコアタグ「${blendTag} (重み: ${profileMap[blendTag]})」を探索テーマに1件ブレンドしました。`);
+    }
+
+    console.log("探索キーワードタグ (重み付き):", selectedTags);
     console.log("優先探索ドメイン:", focusDomains);
 
     // 2. Gemini API + Google Search Grounding でインターネット全体から最新記事を分散探索
     // startTime を渡し、検索ループ内でも GAS 6分制限を監視する
-    const discoveredArticles = discoverNewsViaGoogleSearch(activeTags, focusDomains, startTime, MAX_EXECUTION_MS);
+    const discoveredArticles = discoverNewsViaGoogleSearch(selectedTags, focusDomains, startTime, MAX_EXECUTION_MS);
     const newArticlesSaved = [];
 
     const settings = getSettingsMap();
@@ -312,5 +332,65 @@ function testNewsAnalysis() {
     
   } catch (err) {
     console.error("テスト実行中にエラーが発生しました:", err);
+  }
+}
+
+/**
+ * Issue #32 の動作検証用テスト関数。
+ * 重み付き興味タグリストから、優先度と確率的ブレンドをシミュレーションして検索クエリを生成させます。
+ */
+function testQueryGenerationWithWeights() {
+  console.log("--- 重み付きクエリ生成テスト開始 ---");
+  
+  // テスト用のダミーの興味プロファイルマップ (高スコア8個、低スコア3個)
+  const dummyProfileMap = {
+    "AI": 9,
+    "Google Gemini": 8,
+    "PlayStation 6": 7,
+    "Virtual Reality": 6,
+    "Next.js": 5,
+    "TypeScript": 5,
+    "Cloudflare": 4,
+    "Docker": 3,
+    "Isaac GR00T": 2, // 低スコアタグ（以前の問題のタグ）
+    "ラーメン": 1, // 低スコアタグ
+    "英語学習": 1  // 低スコアタグ
+  };
+
+  const sortedActiveTags = Object.keys(dummyProfileMap)
+    .filter(tag => dummyProfileMap[tag] >= 3)
+    .sort((a, b) => dummyProfileMap[b] - dummyProfileMap[a]);
+  
+  // 上位15件制限 (テストでは全8件が含まれる)
+  const topActiveTags = sortedActiveTags.slice(0, 15);
+  const lowScoreTags = Object.keys(dummyProfileMap).filter(tag => dummyProfileMap[tag] >= 1 && dummyProfileMap[tag] < 3);
+
+  console.log(`高スコアタグ (>=3, ソート・上位15件): ${topActiveTags.join(', ')}`);
+  console.log(`低スコアタグ (1-2): ${lowScoreTags.join(', ')}`);
+
+  // パターン1: 高スコアのみ
+  console.log("\n[パターン1: 高スコアタグのみ]");
+  let selectedTags1 = topActiveTags.map(tag => ({ tag: tag, weight: dummyProfileMap[tag] }));
+  console.log("入力タグ:", selectedTags1);
+  try {
+    const queries1 = generateSearchQueries(selectedTags1);
+    console.log("生成されたクエリ:", queries1);
+  } catch (e) {
+    console.error("エラー:", e);
+  }
+
+  // パターン2: 低スコアタグ（Isaac GR00Tなど）を1つ強制ブレンド
+  console.log("\n[パターン2: 低スコアタグを1つ強制ブレンド]");
+  let selectedTags2 = topActiveTags.map(tag => ({ tag: tag, weight: dummyProfileMap[tag] }));
+  if (lowScoreTags.length > 0) {
+    const blendTag = "Isaac GR00T"; // テスト用に固定してブレンド
+    selectedTags2.push({ tag: blendTag, weight: dummyProfileMap[blendTag] });
+  }
+  console.log("入力タグ:", selectedTags2);
+  try {
+    const queries2 = generateSearchQueries(selectedTags2);
+    console.log("生成されたクエリ:", queries2);
+  } catch (e) {
+    console.error("エラー:", e);
   }
 }
