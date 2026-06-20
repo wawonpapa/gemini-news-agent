@@ -50,6 +50,20 @@ function doGet(e) {
     const webAppUrl = PropertiesService.getScriptProperties().getProperty('WEB_APP_URL');
     const confirmUrl = `${webAppUrl}?article_id=${articleId}&action=${action}&confirm=true`;
 
+    let formattedPubDate = '';
+    if (article.published_at) {
+      try {
+        const pDate = new Date(article.published_at);
+        if (!isNaN(pDate.getTime())) {
+          formattedPubDate = Utilities.formatDate(pDate, "Asia/Tokyo", "yyyy/MM/dd");
+        } else {
+          formattedPubDate = article.published_at;
+        }
+      } catch (err) {
+        formattedPubDate = article.published_at;
+      }
+    }
+
     const formattedSummary = (article.ai_summary || '')
       .split('\n')
       .map(line => line.trim())
@@ -144,6 +158,14 @@ function doGet(e) {
             padding: 4px 10px;
             border-radius: 99px;
             text-transform: uppercase;
+          }
+          .date-badge {
+            font-size: 11px;
+            font-weight: 700;
+            color: #64748b;
+            background-color: #f1f5f9;
+            padding: 4px 10px;
+            border-radius: 99px;
           }
           .importance-badge {
             font-size: 11px;
@@ -486,6 +508,7 @@ function doGet(e) {
             <div class="article-card">
               <div class="article-source-row">
                 <span class="source-badge">${article.source}</span>
+                ${formattedPubDate ? `<span class="date-badge">&#128197; ${formattedPubDate}</span>` : ''}
                 <span class="importance-badge">重要度: ${article.importance}/5</span>
               </div>
               <div class="article-title">「${article.title}」</div>
@@ -999,7 +1022,7 @@ function doPost(e) {
       url: finalUrl,
       source: analyzed.source,
       author: 'User Submitted',
-      published_at: new Date().toISOString(),
+      published_at: analyzed.published_at || new Date().toISOString(), // AIが抽出した公開日を優先
       ai_summary: analyzed.ai_summary,
       category: analyzed.category,
       tags: analyzed.tags,
@@ -1247,6 +1270,7 @@ function analyzeRegisteredNews(url, title, bodyText, comment) {
     properties: {
       title: { type: "STRING", description: "ニュース記事の正確なタイトル" },
       source: { type: "STRING", description: "ニュースの配信元・ウェブサイト名 (例: TechCrunch, 窓の杜 等)" },
+      published_at: { type: "STRING", description: "記事の元サイトにおける公開日または更新日時（例: yyyy/MM/dd、不明な場合は大体の公開時期や空文字。フォーマットは可能な限り yyyy/MM/dd とする）" },
       ai_summary: { type: "STRING", description: "核心的な内容を3行以内の簡潔な日本語箇条書きでまとめた要約" },
       category: { 
         type: "STRING", 
@@ -1267,7 +1291,7 @@ function analyzeRegisteredNews(url, title, bodyText, comment) {
         description: "この記事のどこが有益か、登録者のコメント「" + comment + "」も踏まえた日本語1文の選定理由" 
       }
     },
-    required: ["title", "source", "ai_summary", "category", "tags", "importance", "reason"]
+    required: ["title", "source", "published_at", "ai_summary", "category", "tags", "importance", "reason"]
   };
 
   if (bodyText && bodyText.length > 200) {
@@ -1280,11 +1304,12 @@ ${bodyText.slice(0, 10000)}
 ■ 抽出・解析ルール:
 1. title: 本文の内容から、最も正確で自然なニュースタイトルを決定してください。
 2. source: ニュースの配信元（サイト名）を正確に特定してください。
-3. ai_summary: 3行以内の簡潔な日本語箇条書きで、核心部分をまとめてください。
-4. category: 指定された enum の中から大カテゴリを選択してください。
-5. tags: 関連度の高い重要キーワードタグを日本語または一般的な英語で3個以内抽出してください。
-6. importance: 社会的または技術的な重要性を 1〜5 で評価してください。
-7. reason: この記事を蓄積すべき理由（ユーザーコメント「${comment}」の内容も適宜考慮する）を、明快な日本語1文で作成してください。`;
+3. published_at: 記事の実際の公開日または更新日時（可能なら yyyy/MM/dd の形式）を抽出してください。不明な場合は空文字を返してください。
+4. ai_summary: 3行以内の簡潔な日本語箇条書きで、核心部分をまとめてください。
+5. category: 指定された enum の中から大カテゴリを選択してください。
+6. tags: 関連度の高い重要キーワードタグを日本語または一般的な英語で3個以内抽出してください。
+7. importance: 社会的または技術的な重要性を 1〜5 で評価してください。
+8. reason: この記事を蓄積すべき理由（ユーザーコメント「${comment}」の内容も適宜考慮する）を、明快な日本語1文で作成してください。`;
 
     payload = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -1301,11 +1326,12 @@ URL: ${url}
 ■ 抽出・解析ルール:
 1. title: 検索して見つかる実際の記事タイトルを正確に取得してください。
 2. source: ニュースの配信元（サイト名）を正確に特定してください。
-3. ai_summary: 3行以内の簡潔な日本語箇条書きで、核心部分をまとめてください。
-4. category: 指定された enum の中から大カテゴリを選択してください。
-5. tags: 関連度の高い重要キーワードタグを日本語または一般的な英語で3個以内抽出してください。
-6. importance: 社会的または技術的な重要性を 1〜5 で評価してください。
-7. reason: この記事を蓄積すべき理由（ユーザーコメント「${comment}」の内容も適宜考慮する）を、明快な日本語1文で作成してください。`;
+3. published_at: 記事の実際の公開日または更新日時（可能なら yyyy/MM/dd の形式）を抽出してください。不明な場合は空文字を返してください。
+4. ai_summary: 3行以内の簡潔な日本語箇条書きで、核心部分をまとめてください。
+5. category: 指定された enum の中から大カテゴリを選択してください。
+6. tags: 関連度の高い重要キーワードタグを日本語または一般的な英語で3個以内抽出してください。
+7. importance: 社会的または技術的な重要性を 1〜5 で評価してください。
+8. reason: この記事を蓄積すべき理由（ユーザーコメント「${comment}」の内容も適宜考慮する）を、明快な日本語1文で作成してください。`;
 
     payload = {
       contents: [{ parts: [{ text: prompt }] }],
@@ -1344,6 +1370,20 @@ function createRegistrationSuccessPage(art) {
     tagList = art.tags;
   } else if (typeof art.tags === 'string') {
     tagList = art.tags.split(',').map(t => t.trim());
+  }
+
+  let formattedPubDate = '';
+  if (art.published_at) {
+    try {
+      const pDate = new Date(art.published_at);
+      if (!isNaN(pDate.getTime())) {
+        formattedPubDate = Utilities.formatDate(pDate, "Asia/Tokyo", "yyyy/MM/dd");
+      } else {
+        formattedPubDate = art.published_at;
+      }
+    } catch (err) {
+      formattedPubDate = art.published_at;
+    }
   }
 
   const tagsHtml = tagList
@@ -1426,6 +1466,12 @@ function createRegistrationSuccessPage(art) {
           margin-bottom: 12px;
         }
         .source {
+          background-color: #ecfdf5;
+          padding: 3px 8px;
+          border-radius: 6px;
+        }
+        .date {
+          color: #047857;
           background-color: #ecfdf5;
           padding: 3px 8px;
           border-radius: 6px;
@@ -1562,6 +1608,7 @@ function createRegistrationSuccessPage(art) {
         <div class="article-box">
           <div class="meta-row">
             <span class="source">${art.source}</span>
+            ${formattedPubDate ? `<span class="date">&#128197; ${formattedPubDate}</span>` : ''}
             <span class="importance">重要度: ${art.importance}/5</span>
           </div>
           <div class="title">${art.title}</div>

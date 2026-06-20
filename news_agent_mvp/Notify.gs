@@ -96,10 +96,26 @@ function sendDailyDigest(articles) {
       .map(line => `• ${line}`)
       .join('<br>');
 
+    // 公開日のフォーマット処理
+    let pubDateStr = '';
+    if (a.published_at) {
+      try {
+        const pDate = new Date(a.published_at);
+        if (!isNaN(pDate.getTime())) {
+          pubDateStr = Utilities.formatDate(pDate, "Asia/Tokyo", "yyyy/MM/dd");
+        } else {
+          pubDateStr = a.published_at;
+        }
+      } catch (err) {
+        pubDateStr = a.published_at;
+      }
+    }
+
     html += `
       <div class="card">
         <div class="card-header">
           <span class="source-tag">${a.source}</span>
+          ${pubDateStr ? `<span class="date-badge" style="font-size: 11px; font-weight: 700; color: #64748b; background-color: #f1f5f9; padding: 4px 10px; border-radius: 99px; margin-left: 8px;">&#128197; ${pubDateStr}</span>` : ''}
           <span class="score-badge">興味度: ${a.interest_score}pts</span>
         </div>
         <a href="${baseLink}&action=open" target="_blank" class="card-title">${index + 1}. ${a.title}</a>

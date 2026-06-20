@@ -78,7 +78,7 @@ function dailyNewsJob() {
         url: art.url,
         source: art.source,
         author: art.author || '',
-        published_at: new Date().toISOString(), // 探索日付
+        published_at: art.published_at || new Date().toISOString(), // AIが抽出した公開日を優先
         ai_summary: art.ai_summary,
         category: art.category,
         tags: art.tags,
@@ -280,5 +280,37 @@ ${SpreadsheetApp.getActiveSpreadsheet().getUrl()}
     GmailApp.sendEmail(email, subject, body, { name: "News Agent Monitor" });
   } catch(e) {
     console.error("アラートメール送信エラー:", e);
+  }
+}
+
+/**
+ * Issue #25 の動作検証用テスト関数。
+ * 特定のニュースURLを手動で解析し、日付 (published_at) が正しく抽出・保存されるかをログ出力します。
+ */
+function testNewsAnalysis() {
+  const testUrl = "https://cloud.google.com/blog/products/ai-machine-learning/gemini-1-5-pro-and-gemini-1-5-flash-are-generally-available";
+  console.log(`テスト開始: URL「${testUrl}」の解析を実行します。`);
+  
+  try {
+    const finalUrl = validateAndGetFinalUrl(testUrl);
+    if (!finalUrl) {
+      console.error("URL検証失敗、またはアクセス不可です。");
+      return;
+    }
+    
+    // 実際に本文を取得（またはGoogle Search Grounding）してGeminiで解析
+    const analyzed = analyzeRegisteredNews(finalUrl, "", "", "テストコメント");
+    console.log("--- 解析結果 ---");
+    console.log(`タイトル: ${analyzed.title}`);
+    console.log(`配信元: ${analyzed.source}`);
+    console.log(`抽出された公開日 (published_at): ${analyzed.published_at}`);
+    console.log(`要約: ${analyzed.ai_summary}`);
+    console.log(`カテゴリ: ${analyzed.category}`);
+    console.log(`タグ: ${analyzed.tags ? analyzed.tags.join(', ') : 'なし'}`);
+    console.log(`重要度: ${analyzed.importance}`);
+    console.log(`選定理由: ${analyzed.reason}`);
+    
+  } catch (err) {
+    console.error("テスト実行中にエラーが発生しました:", err);
   }
 }

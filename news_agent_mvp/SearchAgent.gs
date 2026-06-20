@@ -178,7 +178,8 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
 1. 信頼できる配信元の正確なWebページの「URL」および「サイト名（source）」を抜き出してください。URLは検索結果（Google Search grounding results）に表示されている実際のURLと一字一句違わずに正確に出力し、絶対にドメインなどからURLを予測・創作（ハルシネーション）しないでください。
 2. その検索キーワードに関する最も新しく、ユーザーにとって付加価値の高い記事を最大6件精選してください。
 3. 各記事のAI要約は、3行程度の簡潔な日本語箇条書きで分かりやすく要約してください。
-4. なぜこの記事を読むべきか、何が面白いのかの選定理由を明快な日本語1文で作成してください。`;
+4. なぜこの記事を読むべきか、何が面白いのかの選定理由を明快な日本語1文で作成してください。
+5. 各記事の公開日時（published_at）について、元記事の公開日または更新日を抽出してください。フォーマットは可能な限り yyyy/MM/dd とし、どうしても不明な場合は空文字にしてください。`;
 
   // 構造化出力スキーマ定義
   const articleSchema = {
@@ -187,6 +188,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
       title: { type: "STRING", description: "ニュース記事の正確なタイトル" },
       url: { type: "STRING", description: "ニュース記事の正確なWebページのフルURL（有効なURLであること）" },
       source: { type: "STRING", description: "ニュースの配信元・ウェブサイト名 (例: TechCrunch, PR TIMES 等)" },
+      published_at: { type: "STRING", description: "記事の元サイトにおける公開日または更新日時（例: yyyy/MM/dd、不明な場合は大体の公開時期や空文字。フォーマットは可能な限り yyyy/MM/dd とする）" },
       ai_summary: { type: "STRING", description: "核心的な内容を3行以内の簡潔な日本語箇条書きでまとめた要約" },
       category: { 
         type: "STRING", 
@@ -196,7 +198,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
       tags: { 
         type: "ARRAY", 
         items: { type: "STRING" }, 
-        description: "記事に関連するキーワードタグの配列（3個以内）" 
+        description: "記事に関連するキーワードタグ of 配列（3個以内）" 
       },
       importance: { 
         type: "INTEGER", 
@@ -207,7 +209,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
         description: "なぜこの記事を優先して読むべきかを示す日本語の1文" 
       }
     },
-    required: ["title", "url", "source", "ai_summary", "category", "tags", "importance", "reason"]
+    required: ["title", "url", "source", "published_at", "ai_summary", "category", "tags", "importance", "reason"]
   };
 
   const responseSchema = {
