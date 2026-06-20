@@ -455,3 +455,88 @@ function updateArticleTags(articleId, newTags) {
   }
 }
 
+/**
+ * articles シートの指定記事の URL と status カラムを更新します。
+ * @param {string} articleId
+ * @param {string} finalUrl
+ * @param {string} status
+ */
+function updateArticleUrlAndStatus(articleId, finalUrl, status) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const range = sheet.getRange(2, 1, lastRow - 1, 1);
+  const ids = range.getValues().map(row => row[0].toString());
+  
+  const index = ids.indexOf(articleId);
+  if (index !== -1) {
+    const rowNum = index + 2;
+    sheet.getRange(rowNum, 6).setValue(finalUrl); // URL列（6列目）
+    sheet.getRange(rowNum, 14).setValue(status);  // status列（14列目）
+  }
+}
+
+/**
+ * articles シートから指定された記事 ID の行を物理削除します。
+ * @param {string} articleId
+ */
+function deleteArticleRow(articleId) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const range = sheet.getRange(2, 1, lastRow - 1, 1);
+  const ids = range.getValues().map(row => row[0].toString());
+  
+  const index = ids.indexOf(articleId);
+  if (index !== -1) {
+    const rowNum = index + 2;
+    sheet.deleteRow(rowNum);
+    console.log(`スプレッドシートから無効な記事行を削除しました: ID ${articleId}`);
+  }
+}
+
+/**
+ * 指定したステータスに合致する記事リストを articles シートからロードします。
+ * @param {string} status 'pending' など
+ * @return {Array<Object>} 記事リスト
+ */
+function getArticlesByStatus(status) {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  const list = [];
+  if (!sheet) return list;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return list;
+
+  const rows = sheet.getRange(2, 1, lastRow - 1, 15).getValues();
+  rows.forEach(row => {
+    if (row[13].toString().trim() === status) {
+      list.push({
+        article_id: row[0],
+        fetched_at: row[1],
+        published_at: row[2],
+        source: row[3],
+        title: row[4],
+        url: row[5],
+        author: row[6],
+        ai_summary: row[7],
+        category: row[8],
+        tags: row[9] ? row[9].toString().split(',').map(t => t.trim()).filter(t => t.length > 0) : [],
+        importance: parseInt(row[10]) || 1,
+        interest_score: parseFloat(row[11]) || 0,
+        reason: row[12],
+        status: row[13],
+        notified_at: row[14]
+      });
+    }
+  });
+
+  return list;
+}
+

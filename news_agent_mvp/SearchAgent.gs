@@ -30,8 +30,8 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
   // 軽量モードの判定：クエリ数を削減
   const isLiteMode = PropertiesService.getScriptProperties().getProperty('LITE_MODE') === 'true';
   if (isLiteMode) {
-    queries = queries.slice(0, 2);
-    console.log('軽量モードで実行: クエリ数を2件に制限します。');
+    queries = queries.slice(0, 5);
+    console.log('軽量モードで実行: クエリ数を5件に制限します。');
   }
 
   console.log("探索に使用するクエリ:", queries);
@@ -60,35 +60,20 @@ function discoverNewsViaGoogleSearch(tags, focusDomains, startTime, maxExecution
     }
   });
 
-  // 3. 発見された全記事を、接続確認および正規化したURLに基づいて重複排除（ユニーク化）
+  // 3. 発見された全記事を、正規化したURLに基づいて重複排除（ユニーク化）
+  // ※ここでは重いURL生存確認（validateAndGetFinalUrl）は行わず、検証フェーズで非同期に行います。
   const seenUrls = new Set();
   const uniqueArticles = [];
 
   allDiscoveredArticles.forEach(art => {
-    // 【安全制限】残り実行時間が60秒未満ならURL検証を打ち切る
-    if (startTime && maxExecutionMs) {
-      if (Date.now() - startTime > maxExecutionMs - 60000) {
-        console.warn('残り時間がわずかなため、以降のURL検証をスキップします。');
-        return;
-      }
-    }
-
-    // URLの生存確認および最終遷移先URLの解決
-    console.log(`URL検証中: ${art.url}`);
-    const finalUrl = validateAndGetFinalUrl(art.url);
-    if (!finalUrl) {
-      console.warn(`アクセス不可または404のためURLを除外しました: ${art.url}`);
-      return; // 除外
-    }
-
-    // 検証後のURLを反映
-    art.url = finalUrl;
+    if (!art.url) return;
+    
     const normUrl = normalizeUrl(art.url);
 
     if (!seenUrls.has(normUrl)) {
       seenUrls.add(normUrl);
       uniqueArticles.push(art);
-      console.log(`URL検証成功 (有効): ${art.url}`);
+      console.log(`重複排除クリア: ${art.url}`);
     } else {
       console.log(`探索内重複URLを除外しました: ${art.url}`);
     }
@@ -117,15 +102,15 @@ function generateSearchQueries(activeTags) {
   }).join(', ');
 
   const prompt = `あなたは非常に優秀なニュース検索クエリ生成エージェントです。
-指示基準日「${todayStr}」において、以下のユーザーの興味タグに関する過去24時間以内の最新ニュース、重要なテックブログ、新技術発表をWeb上で発見するための、英語の具体的で明確な「Google検索用クエリ（検索窓に入力する文字列）」を正確に3個生成してください。
+指示基準日「${todayStr}」において、以下のユーザーの興味タグに関する過去24時間以内の最新ニュース、重要なテックブログ、新技術発表をWeb上で発見するための、英語の具体的で明確な「Google検索用クエリ（検索窓に入力する文字列）」を正確に30個生成してください。
 
 興味タグ（優先度スコア付き。1〜10で、高いほど関心が強い）：
 ${tagsText}
 
 【生成のルール】：
 1. 優先度スコアが高いタグ（特に関心の強い分野）に関連するテーマを優先的に採用し、クエリを作成してください。
-2. もし優先度スコアが低いタグ（スコア1〜2のタグ。例：「[タグ名] (優先度スコア: 2)」など）がリストに含まれている場合は、セレンディピティ向上のため、3つのクエリのうち1つでその低スコアタグのテーマを意図的に採用してクエリを作成してください。
-3. 3個のクエリ全体で同じタグばかりが偏って使われないよう、異なるテーマ（例: ゲーム、AIエージェント、半導体など）がバランスよくカバーされるようにしてください。
+2. もし優先度スコアが低いタグ（スコア1〜2のタグ。例：「[タグ名] (優先度スコア: 2)」など）がリストに含まれている場合は、セレンディピティ向上のため、30個のクエリのうち3個程度（全体の10%）でその低スコアタグのテーマを意図的に採用してクエリを作成してください。
+3. 30個のクエリ全体で同じタグばかりが偏って使われないよう、異なるテーマ（例: ゲーム、AIエージェント、半導体など）がバランスよくカバーされるようにしてください。
 4. 過去24時間の最新記事を探すため、"latest news 2026"、"new release 2026" などのワードや、具体的な業界トレンドワードを適切に含めてください。
 5. 出力は必ず以下のJSONスキーマに従い、余計な説明文は一切含めないでください。`;
 
@@ -135,7 +120,7 @@ ${tagsText}
       queries: {
         type: "ARRAY",
         items: { type: "STRING" },
-        description: "Google検索窓に入力する具体的な検索用英文クエリ3個の配列"
+        description: "Google検索窓に入力する具体的な検索用英文クエリ30個の配列"
       }
     },
     required: ["queries"]

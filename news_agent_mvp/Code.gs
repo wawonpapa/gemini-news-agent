@@ -10,197 +10,348 @@
  */
 function dailyNewsJob() {
   const functionName = 'dailyNewsJob';
-  const startTime = Date.now(); // GAS 6分実行制限ガード用
-  const MAX_EXECUTION_MS = 5 * 60 * 1000; // 5分で安全停止（1分の余裕を持たせる）
-  writeLog(functionName, 'running', '自律探索ニュース収集を開始します。');
+  const startTime = Date.now();
+  const MAX_EXECUTION_MS = 4 * 60 * 1000 + 30 * 1000; // 4分30秒（安全マージン）
+  
+  const props = PropertiesService.getScriptProperties();
+  let state = props.getProperty('JOB_STATE');
 
   try {
-    // 1. スプレッドシートから現在の「興味タグ」および「優先ドメイン」を読み込む
-    const profileMap = getInterestProfileMap();
-    
-    // 重みが 3 以上のタグをメイン探索キーワードとし、重みの降順（高い順）でソート
-    const sortedActiveTags = Object.keys(profileMap)
-      .filter(tag => profileMap[tag] >= 3)
-      .sort((a, b) => profileMap[b] - profileMap[a]);
-    
-    // 上位15件に制限
-    const topActiveTags = sortedActiveTags.slice(0, 15);
-
-    // 重みが 1 以上 3 未満のタグを低スコアタグとする
-    const lowScoreTags = Object.keys(profileMap).filter(tag => profileMap[tag] >= 1 && profileMap[tag] < 3);
-    const focusDomains = getFocusDomains();
-
-    if (topActiveTags.length === 0 && lowScoreTags.length === 0) {
-      writeLog(functionName, 'warning', '有効な興味タグが登録されていません。ジョブを休止します。');
-      return;
-    }
-
-    // AIに渡す重み付きタグリストを構築
-    let selectedTags = topActiveTags.map(tag => ({ tag: tag, weight: profileMap[tag] }));
-
-    // 確率的ブレンド (20%の確率で低スコアタグから1つブレンドする)
-    const BLEND_PROBABILITY = 0.20;
-    if (lowScoreTags.length > 0 && Math.random() < BLEND_PROBABILITY) {
-      const randomIndex = Math.floor(Math.random() * lowScoreTags.length);
-      const blendTag = lowScoreTags[randomIndex];
-      selectedTags.push({ tag: blendTag, weight: profileMap[blendTag] });
-      console.log(`【セレンディピティ】低スコアタグ「${blendTag} (重み: ${profileMap[blendTag]})」を探索テーマに1件ブレンドしました。`);
-    }
-
-    console.log("探索キーワードタグ (重み付き):", selectedTags);
-    console.log("優先探索ドメイン:", focusDomains);
-
-    // 2. Gemini API + Google Search Grounding でインターネット全体から最新記事を分散探索
-    // startTime を渡し、検索ループ内でも GAS 6分制限を監視する
-    const discoveredArticles = discoverNewsViaGoogleSearch(selectedTags, focusDomains, startTime, MAX_EXECUTION_MS);
-    const newArticlesSaved = [];
-
-    const settings = getSettingsMap();
-    const dailyLimit = parseInt(settings.daily_limit) || 30;
-    const notifyTopN = parseInt(settings.notify_top_n) || 10;
-
-    let processedCount = 0;
-
-    // 【最適化】興味プロファイルを事前に1回だけキャッシュ読み込み（ループ内の重複API呼び出しを防止）
-    const cachedProfileMap = getInterestProfileMap();
-
-    // 【最適化・新規】DBの全登録記事IDを1回のAPI呼び出しでキャッシュ読み込み (高速Set判定)
-    const existingIds = getAllArticleIdsSet();
-    console.log(`キャッシュに登録済みの記事ID数: ${existingIds.size} 件`);
-
-    // 3. 発見された記事のフィルタリングとDB保存
-    discoveredArticles.forEach(art => {
-      const articleId = makeArticleId(art.url);
-
-      // 高速Set判定により、スプレッドシートへの大量重複ロードAPI呼び出しを「0回」に削減！
-      if (existingIds.has(articleId)) {
-        return;
-      }
-
-      if (processedCount >= dailyLimit) {
-        return;
-      }
-
-      // 【安全制限】GAS 6分実行制限ガード：5分経過で現在の結果を保存して安全停止
-      if (Date.now() - startTime > MAX_EXECUTION_MS) {
-        console.warn(`実行時間が5分を超過したため、記事処理を安全に中断します。処理済み: ${processedCount}件`);
-        writeLog(functionName, 'warning', `Execution time limit reached. Scheduling retry in 10 minutes.`);
-        scheduleRetry_(); // リトライトリガーを登録
-        return;
-      }
-
-      // 4. 各記事の総合興味スコアの算出（キャッシュ済みプロファイルを使用）
-      const interestScore = calculateInterestScore(art.tags || [], art.importance || 1, cachedProfileMap);
-
-      const processedArticle = {
-        article_id: articleId,
-        title: art.title,
-        url: art.url,
-        source: art.source,
-        author: art.author || '',
-        published_at: art.published_at || new Date().toISOString(), // AIが抽出した公開日を優先
-        ai_summary: art.ai_summary,
-        category: art.category,
-        tags: art.tags,
-        importance: art.importance,
-        interest_score: interestScore,
-        reason: art.reason,
-        status: 'new'
-      };
-
-      saveArticle(processedArticle);
+    if (!state) {
+      // ----------------------------------------------------
+      // 【フェーズ1: 初期化】
+      // ----------------------------------------------------
+      writeLog(functionName, 'running', '日次ニュースジョブの初期化を開始します。');
       
-      // 次のループの判定に備えてメモリ上のキャッシュSetにも即時追加
-      existingIds.add(articleId);
-      newArticlesSaved.push(processedArticle);
-      processedCount++;
-    });
-
-    console.log(`新着自律探索完了。新規保存件数: ${newArticlesSaved.length} 件`);
-
-    // 【安全制限】配信前の実行時間ガード：すでに制限時間を超えている場合は中断してリトライをスケジュール
-    if (Date.now() - startTime > MAX_EXECUTION_MS) {
-      console.warn(`配信処理の前に実行時間が5分を超過したため、中断してリトライを予約します。`);
-      writeLog(functionName, 'warning', `Execution time limit reached before delivery. Scheduling retry in 10 minutes.`);
-      scheduleRetry_();
-      return;
-    }
-
-    // 5. 今回取得した記事 ＋ 過去に未通知の記事を統合してスコアリングランキングを作成
-    const allPendingArticles = getUnnotifiedArticles();
-
-    if (allPendingArticles.length === 0) {
-      writeLog(functionName, 'success', '新規に配信するニュースはありませんでした。');
+      // スプレッドシートから現在の「興味タグ」および「優先ドメイン」を読み込む
+      const profileMap = getInterestProfileMap();
       
-      // 【最適化】終了前に古いログの自動クリーンアップを実行してシート肥大化を防止
-      cleanupOldLogs();
-      return;
+      // 重みが 3 以上のタグをメイン探索キーワードとし、重みの降順（高い順）でソート
+      const sortedActiveTags = Object.keys(profileMap)
+        .filter(tag => profileMap[tag] >= 3)
+        .sort((a, b) => profileMap[b] - profileMap[a]);
+      
+      // 上位15件に制限
+      const topActiveTags = sortedActiveTags.slice(0, 15);
+      const lowScoreTags = Object.keys(profileMap).filter(tag => profileMap[tag] >= 1 && profileMap[tag] < 3);
+
+      if (topActiveTags.length === 0 && lowScoreTags.length === 0) {
+        writeLog(functionName, 'warning', '有効な興味タグが登録されていません。ジョブを休止します。');
+        return;
+      }
+
+      // AIに渡す重み付きタグリストを構築
+      let selectedTags = topActiveTags.map(tag => ({ tag: tag, weight: profileMap[tag] }));
+
+      // 確率的ブレンド (20%の確率で低スコアタグから1つブレンドする)
+      const BLEND_PROBABILITY = 0.20;
+      if (lowScoreTags.length > 0 && Math.random() < BLEND_PROBABILITY) {
+        const randomIndex = Math.floor(Math.random() * lowScoreTags.length);
+        const blendTag = lowScoreTags[randomIndex];
+        selectedTags.push({ tag: blendTag, weight: profileMap[blendTag] });
+      }
+
+      // 30個のクエリを生成
+      let queries = [];
+      try {
+        queries = generateSearchQueries(selectedTags);
+      } catch(e) {
+        console.error("検索クエリ生成エラー。フォールバックとしてデフォルトの検索を実行します:", e);
+        const fallbackTagNames = selectedTags.map(t => t.tag);
+        queries = [fallbackTagNames.slice(0, 3).join(' ') + ' latest news'];
+      }
+
+      // 軽量モード判定による制限
+      const isLiteMode = props.getProperty('LITE_MODE') === 'true';
+      if (isLiteMode) {
+        queries = queries.slice(0, 5);
+      }
+
+      // 状態を保存して検索フェーズへ
+      props.setProperty('GENERATED_QUERIES', JSON.stringify(queries));
+      props.setProperty('PROCESSED_QUERY_INDEX', '0');
+      props.setProperty('JOB_STATE', 'SEARCHING');
+      state = 'SEARCHING';
+      
+      console.log(`初期化完了。クエリ数: ${queries.length}件。探索を開始します。`);
     }
 
-    // 興味スコアの降順（高スコア順）でソート
-    const sortedArticles = allPendingArticles.sort((a, b) => b.interest_score - a.interest_score);
+    // ----------------------------------------------------
+    // 【フェーズ2: 検索フェーズ】
+    // ----------------------------------------------------
+    if (state === 'SEARCHING') {
+      const queries = JSON.parse(props.getProperty('GENERATED_QUERIES') || '[]');
+      let startIndex = parseInt(props.getProperty('PROCESSED_QUERY_INDEX') || '0', 10);
+      const focusDomains = getFocusDomains();
+      
+      const settings = getSettingsMap();
+      const dailyLimit = parseInt(settings.daily_limit) || 30;
 
-    // 送信件数分スライス
-    const topArticlesToNotify = sortedArticles.slice(0, notifyTopN);
+      // キャッシュSetの取得 (DBの全登録記事IDを1回の呼び出しでロード)
+      const existingIds = getAllArticleIdsSet();
+      const cachedProfileMap = getInterestProfileMap();
 
-    // 6. Gmail でプレミアムニュースレターとして配信
-    if (topArticlesToNotify.length > 0) {
-      console.log(`上位${topArticlesToNotify.length}件の記事をGmailで配信します。`);
-      sendDailyDigest(topArticlesToNotify);
+      console.log(`探索再開: クエリインデックス ${startIndex}/${queries.length} から開始します。`);
 
-      // ステータスを 'notified' に更新
-      topArticlesToNotify.forEach(a => {
-        updateArticleStatus(a.article_id, 'notified');
-      });
+      for (let i = startIndex; i < queries.length; i++) {
+        // 制限時間チェック
+        if (Date.now() - startTime > MAX_EXECUTION_MS) {
+          props.setProperty('PROCESSED_QUERY_INDEX', String(i));
+          setupNextTrigger_();
+          writeLog(functionName, 'warning', `探索時間切れ。インデックス ${i}/${queries.length} で中断し、1分後に再起動します。`);
+          return;
+        }
 
-      writeLog(functionName, 'success', `${topArticlesToNotify.length} 件の自律厳選ニュースを配信しました。`);
-    } else {
-      writeLog(functionName, 'success', '配信条件を満たす記事がありませんでした。');
+        const query = queries[i];
+        try {
+          console.log(`クエリ [${i + 1}/${queries.length}] 実行中: "${query}"`);
+          const articles = executeSingleSearchQuery(query, focusDomains);
+          
+          let savedInQuery = 0;
+          articles.forEach(art => {
+            const articleId = makeArticleId(art.url);
+            if (existingIds.has(articleId)) {
+              return;
+            }
+
+            const interestScore = calculateInterestScore(art.tags || [], art.importance || 1, cachedProfileMap);
+
+            const processedArticle = {
+              article_id: articleId,
+              title: art.title,
+              url: art.url,
+              source: art.source,
+              author: art.author || '',
+              published_at: art.published_at || new Date().toISOString(),
+              ai_summary: art.ai_summary,
+              category: art.category,
+              tags: art.tags,
+              importance: art.importance,
+              interest_score: interestScore,
+              reason: art.reason,
+              status: 'pending' // 生存確認を後回しにし、バッファとして保存
+            };
+
+            saveArticle(processedArticle);
+            existingIds.add(articleId);
+            savedInQuery++;
+          });
+          
+          console.log(`クエリ [${i + 1}] から新規保存: ${savedInQuery}件 (ステータス: pending)`);
+          Utilities.sleep(2000);
+        } catch (err) {
+          console.error(`クエリ「${query}」での探索に失敗しました:`, err);
+          writeLog(functionName, 'warning', `Search query [${query}] failed: ${err.message}`);
+        }
+
+        props.setProperty('PROCESSED_QUERY_INDEX', String(i + 1));
+      }
+
+      // 検索完了
+      props.deleteProperty('GENERATED_QUERIES');
+      props.deleteProperty('PROCESSED_QUERY_INDEX');
+      props.setProperty('JOB_STATE', 'VALIDATING');
+      state = 'VALIDATING';
+      console.log("すべての検索が完了しました。URL検証フェーズへ移行します。");
     }
 
-    // 【最適化・新規】終了前に古い実行ログの自動クリーンアップを実行 (行数制限対応)
-    cleanupOldLogs();
+    // ----------------------------------------------------
+    // 【フェーズ3: URL検証フェーズ】
+    // ----------------------------------------------------
+    if (state === 'VALIDATING') {
+      console.log("URL検証フェーズを開始/再開します。");
+      
+      const pendingArticles = getArticlesByStatus('pending');
+      console.log(`未検証の記事数: ${pendingArticles.length}件`);
+
+      if (pendingArticles.length > 0) {
+        for (let i = 0; i < pendingArticles.length; i++) {
+          // 制限時間チェック
+          if (Date.now() - startTime > MAX_EXECUTION_MS) {
+            setupNextTrigger_();
+            writeLog(functionName, 'warning', `検証時間切れ。残り ${pendingArticles.length - i} 件で中断し、1分後に再起動します。`);
+            return;
+          }
+
+          const art = pendingArticles[i];
+          console.log(`検証中: ${art.url}`);
+          const finalUrl = validateAndGetFinalUrl(art.url);
+          
+          if (finalUrl) {
+            updateArticleUrlAndStatus(art.article_id, finalUrl, 'new');
+            console.log(`検証成功 (有効): ${finalUrl}`);
+          } else {
+            deleteArticleRow(art.article_id);
+            console.warn(`検証失敗 (アクセス不可または404): ${art.url}`);
+          }
+        }
+      }
+
+      // 全検証完了
+      props.setProperty('JOB_STATE', 'DELIVERING');
+      state = 'DELIVERING';
+      console.log("すべてのURL検証が完了しました。配信フェーズへ移行します。");
+    }
+
+    // ----------------------------------------------------
+    // 【フェーズ4: 配信フェーズ】
+    // ----------------------------------------------------
+    if (state === 'DELIVERING') {
+      writeLog(functionName, 'running', 'ニュースの配信処理を開始します。');
+
+      const settings = getSettingsMap();
+      const notifyTopN = parseInt(settings.notify_top_n) || 10;
+
+      const allPendingArticles = getUnnotifiedArticles();
+
+      if (allPendingArticles.length === 0) {
+        writeLog(functionName, 'success', '新規に配信するニュースはありませんでした。');
+        cleanUpJobState_();
+        return;
+      }
+
+      const sortedArticles = allPendingArticles.sort((a, b) => b.interest_score - a.interest_score);
+      const topArticlesToNotify = sortedArticles.slice(0, notifyTopN);
+
+      if (topArticlesToNotify.length > 0) {
+        console.log(`上位${topArticlesToNotify.length}件の記事をGmailで配信します。`);
+        sendDailyDigest(topArticlesToNotify);
+
+        topArticlesToNotify.forEach(a => {
+          updateArticleStatus(a.article_id, 'notified');
+        });
+
+        writeLog(functionName, 'success', `${topArticlesToNotify.length} 件の自律厳選ニュースを配信しました。`);
+      } else {
+        writeLog(functionName, 'success', '配信条件を満たす記事がありませんでした。');
+      }
+
+      cleanUpJobState_();
+    }
 
   } catch (error) {
     console.error("ETLジョブの実行中に重大なエラーが発生しました:", error);
     writeLog(functionName, 'error', `ETL Job Failure: ${error.message}`);
     sendErrorAlert(error.message);
+    
+    // エラー時は状態をクリアしてリトリガーによる無限ループを防止
+    cleanUpJobState_();
     throw error;
   }
 }
 
 /**
- * タイムアウト時に10分後の再実行を動的にスケジュールします。
+ * 次のステップ実行用の1回限りトリガーを登録します。
  */
-function scheduleRetry_() {
+function setupNextTrigger_() {
   const props = PropertiesService.getScriptProperties();
-  if (props.getProperty('RETRY_PENDING') === 'true') return; // 重複登録防止
-  ScriptApp.newTrigger('dailyNewsJobRetry')
+  
+  // 既存の動的トリガーを削除
+  clearJobTriggers_();
+  
+  // 1分後に再開するトリガーを登録
+  const trigger = ScriptApp.newTrigger('dailyNewsJob')
     .timeBased()
-    .after(10 * 60 * 1000) // 10分後
+    .after(1 * 60 * 1000)
     .create();
-  props.setProperty('RETRY_PENDING', 'true');
-  console.log('リトライトリガーを10分後に登録しました。');
+    
+  props.setProperty('NEXT_RUN_TRIGGER_ID', trigger.getUniqueId());
+  console.log(`一時再開トリガーを登録しました (ID: ${trigger.getUniqueId()})`);
 }
 
 /**
- * リトライ用のエントリーポイント。
- * トリガーを削除し、軽量モードで実行します。
+ * 分割実行用の一時トリガーを削除します。
  */
-function dailyNewsJobRetry() {
+function clearJobTriggers_() {
   const props = PropertiesService.getScriptProperties();
-  props.deleteProperty('RETRY_PENDING');
-  // 使用済みのリトライトリガーを自己削除
-  ScriptApp.getProjectTriggers()
-    .filter(t => t.getHandlerFunction() === 'dailyNewsJobRetry')
-    .forEach(t => ScriptApp.deleteTrigger(t));
+  const triggerId = props.getProperty('NEXT_RUN_TRIGGER_ID');
+  if (!triggerId) return;
+
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getUniqueId() === triggerId) {
+      try {
+        ScriptApp.deleteTrigger(t);
+        console.log(`動的分割トリガーを削除しました: ${t.getUniqueId()}`);
+      } catch (e) {
+        console.warn(`トリガー削除に失敗: ${e.message}`);
+      }
+    }
+  });
+  props.deleteProperty('NEXT_RUN_TRIGGER_ID');
+}
+
+/**
+ * ジョブのスクリプトプロパティと動的トリガーをクリーンアップします。
+ */
+function cleanUpJobState_() {
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('JOB_STATE');
+  props.deleteProperty('GENERATED_QUERIES');
+  props.deleteProperty('PROCESSED_QUERY_INDEX');
+  props.deleteProperty('LITE_MODE'); // テスト用の軽量モードプロパティも確実にクリーンアップ
+  clearJobTriggers_();
+  cleanupOldLogs();
+}
+
+
+/**
+ * 分割実行ジョブの状態を完全にリセットするデバッグ用関数。
+ * テスト実行前や、途中で失敗してトリガーが残ってしまった場合に手動実行します。
+ */
+function resetJobState() {
+  console.log("ジョブ状態の完全リセットを開始します...");
+  cleanUpJobState_();
   
-  // 軽量モードフラグをセットして通常ジョブを実行
+  const props = PropertiesService.getScriptProperties();
+  props.deleteProperty('LITE_MODE');
+  props.deleteProperty('RETRY_PENDING');
+  
+  // 残存する古いトリガーも走査してクリーンアップ
+  ScriptApp.getProjectTriggers().forEach(t => {
+    const handler = t.getHandlerFunction();
+    if (handler === 'dailyNewsJobRetry') {
+      try {
+        ScriptApp.deleteTrigger(t);
+        console.log(`残存していた ${handler} トリガーを削除しました。`);
+      } catch (e) {
+        console.warn(`トリガー削除に失敗: ${e.message}`);
+      }
+    }
+  });
+  console.log("ジョブ状態のリセットが完了しました。");
+}
+
+/**
+ * 分割実行（ステートフル）ジョブのシミュレーションテストを実行します。
+ * 軽量モード (LITE_MODE=true) にして、クエリ数を5個に制限した上でジョブの初期フェーズを実行します。
+ */
+function testStatefulJob() {
+  console.log("--- 分割実行テスト開始 ---");
+  const props = PropertiesService.getScriptProperties();
+  
+  // 状態を一旦リセット
+  resetJobState();
+  
+  // 軽量モード（5クエリ）を強制設定
   props.setProperty('LITE_MODE', 'true');
+  console.log("LITE_MODE を true に設定しました。");
+  
   try {
+    console.log("ステップ 1: ジョブの初回実行を開始します...");
     dailyNewsJob();
-  } finally {
-    props.deleteProperty('LITE_MODE');
+    
+    const state = props.getProperty('JOB_STATE');
+    const nextTriggerId = props.getProperty('NEXT_RUN_TRIGGER_ID');
+    const processedIndex = props.getProperty('PROCESSED_QUERY_INDEX');
+    
+    console.log(`ステップ 1 完了時の状態:`);
+    console.log(`- JOB_STATE: ${state}`);
+    console.log(`- PROCESSED_QUERY_INDEX: ${processedIndex}`);
+    console.log(`- NEXT_RUN_TRIGGER_ID (1分後リトリガー): ${nextTriggerId || 'なし'}`);
+    
+  } catch (e) {
+    console.error("テスト実行エラー:", e);
   }
 }
 
