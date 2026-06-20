@@ -116,6 +116,12 @@ function dailyNewsJob() {
 
             const interestScore = calculateInterestScore(art.tags || [], art.importance || 1, cachedProfileMap);
 
+            // 【Issue #34】5日以上前の古いニュースは最初から保存しない
+            if (isArticleTooOld(art.published_at, 5)) {
+              console.log(`[古いニュース除外] 5日以上前の記事のためスキップします: "${art.title}" (${art.published_at})`);
+              return;
+            }
+
             const processedArticle = {
               article_id: articleId,
               title: art.title,
@@ -544,4 +550,92 @@ function testQueryGenerationWithWeights() {
   } catch (e) {
     console.error("エラー:", e);
   }
+}
+
+/**
+ * 記事の公開日が指定日数（デフォルト5日）以上前かどうかを判定します。
+ * @param {string} publishedAtStr "yyyy/MM/dd" 形式などの日付文字列
+ * @param {number} maxDaysAgo 許容する最大日数（デフォルト5）
+ * @return {boolean} 指定日数以上前の場合は true、そうでない場合は false。パースできない場合は false
+ */
+function isArticleTooOld(publishedAtStr, maxDaysAgo) {
+  const daysLimit = (maxDaysAgo === undefined) ? 5 : maxDaysAgo;
+  if (!publishedAtStr || typeof publishedAtStr !== 'string') return false;
+
+  try {
+    // 全角英数字を半角に変換、および区切り文字の正規化
+    let cleanStr = publishedAtStr
+      .replace(/[０-９]/g, function(s) {
+        return String.fromCharCode(s.charCodeAt(0) - 0xFEE0);
+      })
+      .replace(/年|月/g, '/')
+      .replace(/日/g, '')
+      .replace(/-/g, '/')
+      .trim();
+
+    // 日付だけを抽出 (時間部分を除去)
+    cleanStr = cleanStr.split(' ')[0];
+
+    const publishedDate = new Date(cleanStr);
+    if (isNaN(publishedDate.getTime())) {
+      console.warn(`[日付パース不可] "${publishedAtStr}" を日付オブジェクトに変換できませんでした。除外をスキップします。`);
+      return false;
+    }
+
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    const articleDate = new Date(publishedDate);
+    articleDate.setHours(0, 0, 0, 0);
+
+    const diffTime = today.getTime() - articleDate.getTime();
+    const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24));
+
+    if (diffDays >= daysLimit) {
+      return true;
+    }
+  } catch (e) {
+    console.warn(`[日付検証エラー] ${publishedAtStr} の検証中にエラー: ${e.message}`);
+  }
+  return false;
+}
+
+/**
+ * isArticleTooOld 関数の動作テスト用デバッグ関数。
+ */
+function testIsArticleTooOld() {
+  const formatDate = (date) => {
+    return Utilities.formatDate(date, "Asia/Tokyo", "yyyy/MM/dd");
+  };
+
+  const getPastDateStr = (daysAgo) => {
+    const d = new Date();
+    d.setDate(d.getDate() - daysAgo);
+    return formatDate(d);
+  };
+
+  console.log("--- 日付フィルターテスト開始 (閾値: 5日) ---");
+  
+  const testCases = [
+    { label: "今日", val: getPastDateStr(0), expected: false },
+    { label: "3日前", val: getPastDateStr(3), expected: false },
+    { label: "4日前", val: getPastDateStr(4), expected: false },
+    { label: "5日前 (境界値)", val: getPastDateStr(5), expected: true },
+    { label: "10日前", val: getPastDateStr(10), expected: true },
+    { label: "空文字 (不明)", val: "", expected: false },
+    { label: "無効な日付形式", val: "invalid-date-string", expected: false },
+    { label: "日本語表記 (3日前)", val: "", expected: false },
+  ];
+
+  testCases.forEach(tc => {
+    let val = tc.val;
+    if (tc.label.startsWith("日本語表記")) {
+      const parts = getPastDateStr(3).split('/');
+      val = `${parts[0]}年${parts[1]}月${parts[2]}日`;
+    }
+    
+    const result = isArticleTooOld(val, 5);
+    const pass = result === tc.expected;
+    console.log(`[${pass ? "PASS" : "FAIL"}] 入力: "${val}" (${tc.label}) -> 判定: ${result} (期待値: ${tc.expected})`);
+  });
 }
