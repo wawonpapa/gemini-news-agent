@@ -274,6 +274,42 @@ function updateArticleStatus(articleId, status) {
 }
 
 /**
+ * 複数の記事のステータス（status）カラムを一括で高速更新します。
+ * @param {Array<string>} articleIds 更新対象の記事IDの配列
+ * @param {string} status 更新後のステータス（'notified', 'duplicated' など）
+ */
+function updateArticlesStatusBatch(articleIds, status) {
+  if (!articleIds || articleIds.length === 0) return;
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  if (!sheet) return;
+
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return;
+
+  const range = sheet.getRange(2, 1, lastRow - 1, 15); // 1列目(ID)から15列目(notified_at)までを取得
+  const data = range.getValues();
+  const idSet = new Set(articleIds);
+  let hasChanges = false;
+  const now = new Date();
+
+  for (let i = 0; i < data.length; i++) {
+    const currentId = data[i][0].toString();
+    if (idSet.has(currentId)) {
+      data[i][13] = status; // 14列目 (インデックス13) は status
+      if (status === 'notified') {
+        data[i][14] = now; // 15列目 (インデックス14) は notified_at
+      }
+      hasChanges = true;
+    }
+  }
+
+  if (hasChanges) {
+    range.setValues(data);
+    console.log(`[BatchUpdate] ${articleIds.length} 件の記事のステータスを一括で '${status}' に更新しました。`);
+  }
+}
+
+/**
  * ユーザーのリアクション履歴を reactions シートに記録します。
  * @param {string} articleId
  * @param {string} action
