@@ -174,8 +174,7 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
 1. 信頼できる配信元の正確なWebページの「URL」および「サイト名（source）」を抜き出してください。URLは検索結果（Google Search grounding results）に表示されている実際のURLと一字一句違わずに正確に出力し、絶対にドメインなどからURLを予測・創作（ハルシネーション）しないでください。
 2. その検索キーワードに関する最も新しく、ユーザーにとって付加価値の高い記事を最大6件精選してください。
 3. 各記事のAI要約は、3行程度の簡潔な日本語箇条書きで分かりやすく要約してください。
-4. なぜこの記事を読むべきか、何が面白いのかの選定理由を明快な日本語1文で作成してください。
-5. 各記事の公開日時（published_at）について、元記事の公開日または更新日を抽出してください。フォーマットは必ず yyyy/MM/dd とし、どうしても不明な場合は空文字にしてください。日付の捏造（ハルシネーション）は絶対に避け、検索結果（Google Search grounding results）に記載されている正確な日付を使用してください。また、公開日から数週間以上経過している古い記事は極力抽出対象から除外してください。`;
+4. 各記事の公開日時（published_at）について、元記事の公開日または更新日を抽出してください。フォーマットは必ず yyyy/MM/dd とし、どうしても不明な場合は空文字にしてください。日付の捏造（ハルシネーション）は絶対に避け、検索結果（Google Search grounding results）に記載されている正確な日付を使用してください。また、公開日から数週間以上経過している古い記事は極力抽出対象から除外してください。`;
 
   // 構造化出力スキーマ定義
   const articleSchema = {
@@ -195,18 +194,14 @@ ${focusDomains.map(d => `- ${d}`).join('\n')}
       tags: { 
         type: "ARRAY", 
         items: { type: "STRING" }, 
-        description: "記事に関連するキーワードタグ of 配列（3個以内）" 
+        description: "記事に関連するキーワードタグの配列（3個以内）" 
       },
       importance: { 
         type: "INTEGER", 
         description: "客観的重要度スコア（1から5、5が最高）" 
-      },
-      reason: { 
-        type: "STRING", 
-        description: "なぜこの記事を優先して読むべきかを示す日本語の1文" 
       }
     },
-    required: ["title", "url", "source", "published_at", "ai_summary", "category", "tags", "importance", "reason"]
+    required: ["title", "url", "source", "published_at", "ai_summary", "category", "tags", "importance"]
   };
 
   const responseSchema = {

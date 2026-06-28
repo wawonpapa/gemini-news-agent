@@ -141,7 +141,7 @@ function dailyNewsJob() {
               tags: art.tags,
               importance: art.importance,
               interest_score: interestScore,
-              reason: art.reason,
+              reason: art.reason || '',
               status: 'pending' // 生存確認を後回しにし、バッファとして保存
             };
 

@@ -514,8 +514,6 @@ function doGet(e) {
               <div class="article-title">「${article.title}」</div>
               <div class="summary-label">&#128203; AI要約</div>
               <div class="summary-content">${formattedSummary}</div>
-              <div class="reason-label">&#128161; 選定理由</div>
-              <div class="reason-content">${article.reason}</div>
             </div>
             <button onclick="openArticle()" class="btn btn-primary">記事を読む &#8599;</button>
             <button onclick="window.close();" class="cancel-btn">閉じる</button>
@@ -527,14 +525,13 @@ function doGet(e) {
             <h2>この記事はいかがでしたか？</h2>
             <p class="eval-subtitle">評価と興味タグの調整を行ってください。</p>
             
-            <div class="eval-buttons">
-              <button onclick="submitEvaluation('good')" class="btn btn-good">&#128077; Good</button>
-              <button onclick="submitEvaluation('bad')" class="btn btn-bad">&#128078; Bad</button>
+            <div class="eval-buttons" id="eval-button-container">
+              <!-- JavaScriptによって動的にレンダリングされます -->
             </div>
             
             <div class="feedback-reason-section">
               <div class="summary-label">&#128172; 理由・メモ (任意)</div>
-              <div class="reason-choices">
+              <div class="reason-choices" id="reason-choices-container">
                 <label class="reason-choice-item">
                   <input type="checkbox" name="reason-opt" value="リンク切れ(404)" />
                   <span>リンク切れ (404)</span>
@@ -605,6 +602,7 @@ function doGet(e) {
 
           window.addEventListener('DOMContentLoaded', function() {
             renderTags();
+            renderEvalButtons();
 
             if (INITIAL_ACTION === 'open') {
               if (sessionStorage.getItem('opened_' + ARTICLE_ID)) {
@@ -618,6 +616,25 @@ function doGet(e) {
               showLaterMode();
             }
           });
+
+          function renderEvalButtons() {
+            var btnContainer = document.getElementById('eval-button-container');
+            var choicesContainer = document.getElementById('reason-choices-container');
+            var memoArea = document.getElementById('feedback-memo');
+            if (!btnContainer) return;
+
+            if (INITIAL_ACTION === 'bad') {
+              // 過去配信メールの「Bad」からの遷移に対応（後方互換）
+              btnContainer.innerHTML = '<button onclick="submitEvaluation(\'bad\')" class="btn btn-bad">&#128078; 評価を確定する (Bad)</button>';
+              if (choicesContainer) choicesContainer.style.display = 'flex';
+              if (memoArea) memoArea.placeholder = '具体的な理由やメモをご自由に入力してください...';
+            } else {
+              // デフォルト（Good からの遷移や一般表示）
+              btnContainer.innerHTML = '<button onclick="submitEvaluation(\'good\')" class="btn btn-good">&#128077; 評価を確定する (Good)</button>';
+              if (choicesContainer) choicesContainer.style.display = 'none'; // Good時はネガティブなチェックボックスを非表示に
+              if (memoArea) memoArea.placeholder = '良かった理由や感想、メモをご自由に入力してください...';
+            }
+          }
 
           window.addEventListener('pageshow', function(event) {
             if (INITIAL_ACTION === 'open' && sessionStorage.getItem('opened_' + ARTICLE_ID)) {

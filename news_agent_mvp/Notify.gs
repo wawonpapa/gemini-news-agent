@@ -125,10 +125,6 @@ function sendDailyDigest(articles) {
           ${formattedSummary}
         </div>
 
-        <div class="reason-box">
-          &#128161; <strong>読むべき理由:</strong> ${a.reason}
-        </div>
-
         <div class="tags-container">
           ${tagsHtml}
         </div>
@@ -136,7 +132,6 @@ function sendDailyDigest(articles) {
         <div class="action-bar">
           <a href="${baseLink}&action=open" target="_blank" class="btn btn-open">読む &#8599;</a>
           <a href="${baseLink}&action=good" target="_blank" class="btn btn-good">Good &#128077;</a>
-          <a href="${baseLink}&action=bad" target="_blank" class="btn btn-bad">Bad &#128078;</a>
           <a href="${baseLink}&action=read_later" target="_blank" class="btn btn-later">あとで読む &#128204;</a>
         </div>
       </div>
@@ -169,4 +164,41 @@ function sendDailyDigest(articles) {
       noReply: true
     }
   );
+}
+
+/**
+ * 配信メールの表示確認用テスト関数。
+ * 本番データを一切汚染せず、自分宛にテスト用ニュースレターメールを送信します。
+ */
+function testSendDailyDigest() {
+  console.log("--- メール配信表示テスト開始 ---");
+  const testArticles = [
+    {
+      article_id: "test_article_01",
+      title: "【テスト】Gemini 1.5 Proを用いた自律型開発エージェントの可能性",
+      source: "TechNews Portal",
+      published_at: "2026/06/28",
+      interest_score: 85,
+      ai_summary: "- Gemini APIを用いた完全自律のコーディングエージェントの実用性が向上。\n- スコア計算ロジックとフィードバックの統合による自動パーソナライズ。\n- GAS環境での6分制限に対する非同期分割実行の回避設計。",
+      tags: ["AI", "Gemini", "GAS"],
+      reason: "これは非表示になるはずの選定理由です（メールには表示されないはずです）。"
+    },
+    {
+      article_id: "test_article_02",
+      title: "【テスト】Next.js 15で導入された新機能とBFCache最適化手法",
+      source: "WebDev Weekly",
+      published_at: "2026/06/27",
+      interest_score: 72,
+      ai_summary: "- Next.js 15におけるサーバーコンポーネコンポーネントの初期描画改善。\n- 同一タブ読書フローとブラウザバック時の評価切り替えによるUX向上。\n- クライアント側でのsessionStorageを用いた状態管理の実装方法。",
+      tags: ["Next.js", "Web", "UX"],
+      reason: "これもメールから削除され、表示されないことを確認するための理由です。"
+    }
+  ];
+  
+  try {
+    sendDailyDigest(testArticles);
+    console.log("テストメールの送信に成功しました！登録されている NOTIFY_EMAIL 宛にメールが届いているか確認してください。");
+  } catch (e) {
+    console.error("テストメール送信中にエラーが発生しました:", e);
+  }
 }
