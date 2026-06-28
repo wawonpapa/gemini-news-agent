@@ -106,3 +106,143 @@ ${article.raw_summary || '概要なし'}`;
   // APIから直接スキーマ通りのJSONが返るため、マークダウンの置換をせずに安全にパース可能
   return JSON.parse(resultText);
 }
+
+/**
+ * 配信候補の記事リストを受け取り、Gemini APIを用いて内容ベースの重複排除を行います。
+ * @param {Array<Object>} articles 配信候補記事の配列
+ * @param {Set<string>} excludedIds 除外された記事IDを格納するためのSetオブジェクト（副作用でIDが追加されます）
+ * @return {Array<Object>} 重複排除後の記事リスト
+ */
+function deduplicateArticlesViaAI(articles, excludedIds) {
+  if (!articles || articles.length <= 1) {
+    return articles;
+  }
+
+  const apiKey = getGeminiApiKey();
+  const modelName = 'gemini-3.1-flash-lite';
+  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${modelName}:generateContent`;
+
+  // AIに渡すコンパクトな記事メタデータリストを構築（要約を省くことでトークンを約70%節約し高速化）
+  const compactList = articles.map(art => ({
+    id: art.article_id,
+    title: art.title,
+    source: art.source,
+    category: art.category
+  }));
+
+  const prompt = `あなたは非常に優れたニュース編集者です。
+与えられたニュース記事のリストを注意深く読み、内容（扱っている時事ニュースイベント、新技術・製品発表など）が実質的に同一である「重複記事」のグループを特定してください。
+各重複グループについて、1つの代表的な記事（ID）を残し、それ以外の重複記事（ID）を除外（グループ化）してください。
+
+【代表記事の選定基準】：
+1. 重複するグループ内で、最も公開日が新しく、かつ最も具体的で情報量が多い記事を representative_id として選択してください。
+2. 異なるメディアが同じイベントを報じている場合（例: NVIDIAが新しいGPUを発表したニュース、特定の企業のレイアウト発表など）、それらは重複グループとみなします。
+3. 代表として残す記事以外の重複する記事のIDを duplicate_ids 配列に入れてください。
+
+【記事リスト】:
+${JSON.stringify(compactList, null, 2)}
+
+出力は必ず以下のJSONスキーマに従い、余計な説明文は一切含めないでください。`;
+
+  // Structured Outputsのスキーマ定義
+  const responseSchema = {
+    type: "OBJECT",
+    properties: {
+      duplicate_groups: {
+        type: "ARRAY",
+        items: {
+          type: "OBJECT",
+          properties: {
+            representative_id: {
+              type: "STRING",
+              description: "重複グループの中で、代表として配信に残す記事のID"
+            },
+            duplicate_ids: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "重複グループ内で、代表記事と同一トピックであるため除外（非表示）すべき記事のID配列"
+            }
+          },
+          required: ["representative_id", "duplicate_ids"]
+        },
+        description: "重複しているニュース記事のグループ一覧。重複がない場合は空配列。"
+      }
+    },
+    required: ["duplicate_groups"]
+  };
+
+  const payload = {
+    contents: [
+      {
+        parts: [
+          { text: prompt }
+        ]
+      }
+    ],
+    generationConfig: {
+      responseMimeType: "application/json",
+      responseSchema: responseSchema,
+      temperature: 0.1 // 決定論的で安定した判定を期待するため、極めて低い温度に設定
+    }
+  };
+
+  try {
+    const response = UrlFetchApp.fetch(endpoint, {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {
+        'x-goog-api-key': apiKey
+      },
+      payload: JSON.stringify(payload),
+      muteHttpExceptions: true
+    });
+
+    const responseCode = response.getResponseCode();
+    const responseText = response.getContentText();
+
+    if (responseCode !== 200) {
+      console.warn(`[AI重複排除] Gemini APIの呼び出しに失敗しました (Status: ${responseCode}): ${responseText}`);
+      return articles; // APIエラー時はフォールバックとして重複排除せずそのまま返す
+    }
+
+    const json = JSON.parse(responseText);
+    if (!json.candidates || json.candidates.length === 0 || !json.candidates[0].content) {
+      console.warn(`[AI重複排除] Gemini APIから無効なレスポンスが返されました: ${responseText}`);
+      return articles;
+    }
+
+    const resultText = json.candidates[0].content.parts[0].text;
+    const parsed = JSON.parse(resultText);
+
+    // AIハルシネーション対策の厳格なID検証
+    const validIds = new Set(articles.map(a => a.article_id));
+    const duplicateIdsToRemove = new Set();
+    
+    if (parsed.duplicate_groups && Array.isArray(parsed.duplicate_groups)) {
+      parsed.duplicate_groups.forEach(group => {
+        // 代表記事IDが入力に存在することを確認
+        if (validIds.has(group.representative_id) && Array.isArray(group.duplicate_ids)) {
+          group.duplicate_ids.forEach(id => {
+            // 除外対象IDが入力に存在し、かつ代表IDと異なること（自身を消さないガード）を確認
+            if (validIds.has(id) && id !== group.representative_id) {
+              duplicateIdsToRemove.add(id);
+              if (excludedIds) {
+                excludedIds.add(id); // 副作用で除外対象を呼び出し元に共有
+              }
+            }
+          });
+        }
+      });
+    }
+
+    console.log(`[AI重複排除] 重複と判定されて除外された記事数: ${duplicateIdsToRemove.size} 件`);
+    
+    // 除外対象となっていない記事のみをフィルタリングして返す
+    return articles.filter(art => !duplicateIdsToRemove.has(art.article_id));
+
+  } catch (e) {
+    console.error("[AI重複排除] 重複排除処理中に予期せぬエラーが発生しました。元のリストを返します:", e);
+    return articles; // エラー時は安全にフォールバック
+  }
+}
+

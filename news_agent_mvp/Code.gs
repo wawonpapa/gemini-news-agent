@@ -226,15 +226,57 @@ function dailyNewsJob() {
       }
 
       const sortedArticles = allPendingArticles.sort((a, b) => b.interest_score - a.interest_score);
-      const topArticlesToNotify = sortedArticles.slice(0, notifyTopN);
+
+      // フィーチャーフラグの型安全チェック (Booleanチェックボックスおよび文字列 "TRUE" / "true" に対応)
+      const enableAIDeduplication = settings.enable_ai_deduplication !== undefined && 
+        String(settings.enable_ai_deduplication).toUpperCase() === 'TRUE';
+
+      let topArticlesToNotify = [];
+      const excludedIds = new Set();
+
+      if (enableAIDeduplication) {
+        // 重複排除用に、配信数（notifyTopN）の2.5倍（バッファ十分な30件程度を上限）を切り出す
+        const candidateLimit = Math.min(sortedArticles.length, Math.ceil(notifyTopN * 2.5));
+        const candidates = sortedArticles.slice(0, candidateLimit);
+        
+        console.log(`[AI重複排除] 有効です。上位 ${candidates.length} 件を重複チェックにかけます。`);
+        
+        const deduplicated = deduplicateArticlesViaAI(candidates, excludedIds);
+        
+        // 過剰除外セーフティネットの判定 (残ったユニーク記事数が notifyTopN / 2 を下回る場合はフォールバック)
+        const minThreshold = Math.max(1, Math.floor(notifyTopN / 2));
+        if (deduplicated.length < minThreshold) {
+          console.warn(`[AI重複排除] 重複除外後の記事数 (${deduplicated.length}件) が閾値 (${minThreshold}件) を下回りました。過剰判定とみなして従来のソート配信へフォールバックします。`);
+          writeLog(functionName, 'warning', `Deduplication returned too few articles (${deduplicated.length}). Falling back to simple sort.`);
+          topArticlesToNotify = sortedArticles.slice(0, notifyTopN);
+          excludedIds.clear(); // 除外リストもクリア
+        } else {
+          // 残り（candidateLimit以降）の記事から、重複排除で除外されたものをフィルターして結合
+          const remainingArticles = sortedArticles.slice(candidateLimit).filter(art => !excludedIds.has(art.article_id));
+          const finalMerged = deduplicated.concat(remainingArticles);
+          topArticlesToNotify = finalMerged.slice(0, notifyTopN);
+        }
+      } else {
+        console.log(`[AI重複排除] 無効です。従来の単純ソートで配信します。`);
+        topArticlesToNotify = sortedArticles.slice(0, notifyTopN);
+      }
 
       if (topArticlesToNotify.length > 0) {
         console.log(`上位${topArticlesToNotify.length}件の記事をGmailで配信します。`);
         sendDailyDigest(topArticlesToNotify);
 
-        topArticlesToNotify.forEach(a => {
-          updateArticleStatus(a.article_id, 'notified');
-        });
+        // 配信済み記事のステータスを一括更新 (notified)
+        const notifiedIds = topArticlesToNotify.map(a => a.article_id);
+        updateArticlesStatusBatch(notifiedIds, 'notified');
+
+        // 重複除外された記事（今回の配信対象に入り、かつ除外対象となったもの）を 'duplicated' に一括更新
+        if (excludedIds.size > 0) {
+          // excludedIds のうち、最終的に 'notified' にならなかったものを 'duplicated' に更新
+          const actualExcludedIds = Array.from(excludedIds).filter(id => !notifiedIds.includes(id));
+          if (actualExcludedIds.length > 0) {
+            updateArticlesStatusBatch(actualExcludedIds, 'duplicated');
+          }
+        }
 
         writeLog(functionName, 'success', `${topArticlesToNotify.length} 件の自律厳選ニュースを配信しました。`);
       } else {
@@ -865,6 +907,81 @@ function testWatchdogRecovery() {
     resetJobState();
     deleteArticleRow("dummy_culprit_id");
     deleteArticleRow("dummy_valid_id");
+  }
+}
+
+/**
+ * AI重複排除機能の動作検証用テスト関数。
+ */
+function testAIDeduplication() {
+  console.log("--- AI重複排除テスト開始 ---");
+  
+  const testArticles = [
+    {
+      article_id: "dummy_a",
+      title: "GoogleがGemini 1.5 Flashを公開。開発効率を大幅向上",
+      source: "TechNews JP",
+      category: "Tech",
+      ai_summary: "Googleが新しい高速・軽量なAIモデルであるGemini 1.5 Flashを発表したことを報じています。"
+    },
+    {
+      article_id: "dummy_b",
+      title: "Google、新世代の高速AIモデル『Gemini 1.5 Flash』を発表",
+      source: "IT Media Blog",
+      category: "Tech",
+      ai_summary: "Googleの新AIモデル「Gemini 1.5 Flash」がリリースされ、開発者向けAPIが公開されました。"
+    },
+    {
+      article_id: "dummy_c",
+      title: "NVIDIAの新型GPU、来月にいよいよリリースへ",
+      source: "Gamer Tech",
+      category: "Tech",
+      ai_summary: "NVIDIAが次世代グラフィックカードの発売日を来月に決定したというリーク情報です。"
+    },
+    {
+      article_id: "dummy_d",
+      title: "次世代グラフィックボードとなるNVIDIA新型GPUの発売時期がリークされる",
+      source: "Hardware JP",
+      category: "Tech",
+      ai_summary: "NVIDIAが来月発売する予定 of 新型GPUに関するスペックとリリーススケジュールについてのリーク。"
+    },
+    {
+      article_id: "dummy_e",
+      title: "東京でいま最も熱い、激ウマ塩ラーメン店10選",
+      source: "グルメジャーナル",
+      category: "Other",
+      ai_summary: "東京都内のおすすめ塩ラーメン店を厳選して10店舗紹介したまとめ記事です。"
+    }
+  ];
+
+  const excludedIds = new Set();
+  console.log("テストデータをAI重複排除に送信します...");
+  
+  try {
+    const result = deduplicateArticlesViaAI(testArticles, excludedIds);
+    
+    console.log("=== 重複排除結果 ===");
+    console.log(`- 送信前の記事数: ${testArticles.length} 件`);
+    console.log(`- 重複排除後の記事数: ${result.length} 件`);
+    console.log(`- 除外された記事ID:`, Array.from(excludedIds));
+    
+    // 検証
+    const isGeminiDupRemoved = excludedIds.has("dummy_a") || excludedIds.has("dummy_b");
+    const isNvidiaDupRemoved = excludedIds.has("dummy_c") || excludedIds.has("dummy_d");
+    const isRamenKept = !excludedIds.has("dummy_e");
+    
+    console.log(`- Googleの重複記事がどちらか一方除外されたか: ${isGeminiDupRemoved ? "PASS" : "FAIL"}`);
+    console.log(`- NVIDIAの重複記事がどちらか一方除外されたか: ${isNvidiaDupRemoved ? "PASS" : "FAIL"}`);
+    console.log(`- ラーメン記事（独立トピック）が除外されずに残ったか: ${isRamenKept ? "PASS" : "FAIL"}`);
+    
+    if (isGeminiDupRemoved && isNvidiaDupRemoved && isRamenKept) {
+      console.log("【総合結果】AI重複排除テスト：PASS");
+    } else {
+      console.log("【総合結果】AI重複排除テスト：FAIL");
+    }
+    
+  } catch (e) {
+    console.error("AI重複排除テスト中にエラーが発生しました:", e);
   }
 }
 
