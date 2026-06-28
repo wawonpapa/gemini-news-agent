@@ -11,9 +11,16 @@
 function dailyNewsJob() {
   const functionName = 'dailyNewsJob';
   const startTime = Date.now();
-  const MAX_EXECUTION_MS = 4 * 60 * 1000 + 30 * 1000; // 4分30秒（安全マージン）
+  const MAX_EXECUTION_MS = 3 * 60 * 1000 + 30 * 1000; // 3分30秒（ハングアップ時の安全マージン）
   
   const props = PropertiesService.getScriptProperties();
+  
+  // 起動時の生存ハートビートを更新
+  props.setProperty('LAST_ACTIVE_TIME', String(Date.now()));
+  
+  // ジョブ起動ごとにWatchdogトリガーを更新・再登録（分割実行時のトリガーリーク防止と監視継続）
+  setupWatchdogTrigger_();
+  
   let state = props.getProperty('JOB_STATE');
 
   try {
@@ -151,6 +158,7 @@ function dailyNewsJob() {
         }
 
         props.setProperty('PROCESSED_QUERY_INDEX', String(i + 1));
+        props.setProperty('LAST_ACTIVE_TIME', String(Date.now())); // 生存ハートビートの更新
       }
 
       // 検索完了
@@ -190,6 +198,7 @@ function dailyNewsJob() {
             deleteArticleRow(art.article_id);
             console.warn(`検証失敗 (アクセス不可または404): ${art.url}`);
           }
+          props.setProperty('LAST_ACTIVE_TIME', String(Date.now())); // 生存ハートビートの更新
         }
       }
 
@@ -296,7 +305,10 @@ function cleanUpJobState_() {
   props.deleteProperty('GENERATED_QUERIES');
   props.deleteProperty('PROCESSED_QUERY_INDEX');
   props.deleteProperty('LITE_MODE'); // テスト用の軽量モードプロパティも確実にクリーンアップ
+  props.deleteProperty('LAST_ACTIVE_TIME');
+  props.deleteProperty('WATCHDOG_RECOVERY_COUNT');
   clearJobTriggers_();
+  clearWatchdogTrigger_(); // 正常終了時にWatchdogトリガーを削除
   cleanupOldLogs();
 }
 
@@ -316,7 +328,7 @@ function resetJobState() {
   // 残存する古いトリガーも走査してクリーンアップ
   ScriptApp.getProjectTriggers().forEach(t => {
     const handler = t.getHandlerFunction();
-    if (handler === 'dailyNewsJobRetry') {
+    if (handler === 'dailyNewsJobRetry' || handler === 'dailyNewsJobWatchdog') {
       try {
         ScriptApp.deleteTrigger(t);
         console.log(`残存していた ${handler} トリガーを削除しました。`);
@@ -639,3 +651,221 @@ function testIsArticleTooOld() {
     console.log(`[${pass ? "PASS" : "FAIL"}] 入力: "${val}" (${tc.label}) -> 判定: ${result} (期待値: ${tc.expected})`);
   });
 }
+
+/**
+ * Watchdog（監視用）トリガーを登録します。
+ */
+function setupWatchdogTrigger_() {
+  const props = PropertiesService.getScriptProperties();
+  
+  // 既存のWatchdogトリガーがあれば先にクリーンアップして重複を防ぐ
+  clearWatchdogTrigger_();
+  
+  // 30分後に監視するトリガーを登録
+  const trigger = ScriptApp.newTrigger('dailyNewsJobWatchdog')
+    .timeBased()
+    .after(30 * 60 * 1000)
+    .create();
+    
+  props.setProperty('WATCHDOG_TRIGGER_ID', trigger.getUniqueId());
+  console.log(`Watchdogトリガーを登録しました (ID: ${trigger.getUniqueId()})`);
+}
+
+/**
+ * Watchdogトリガーを削除します。
+ */
+function clearWatchdogTrigger_() {
+  const props = PropertiesService.getScriptProperties();
+  const triggerId = props.getProperty('WATCHDOG_TRIGGER_ID');
+  if (!triggerId) return;
+
+  const triggers = ScriptApp.getProjectTriggers();
+  triggers.forEach(t => {
+    if (t.getUniqueId() === triggerId) {
+      try {
+        ScriptApp.deleteTrigger(t);
+        console.log(`Watchdogトリガーを削除しました: ${t.getUniqueId()}`);
+      } catch (e) {
+        console.warn(`Watchdogトリガー削除に失敗: ${e.message}`);
+      }
+    }
+  });
+  props.deleteProperty('WATCHDOG_TRIGGER_ID');
+}
+
+/**
+ * 30分間ジョブが完了しなかった場合に異常終了とみなし、
+ * 原因URLを1件除外してジョブを再始動するWatchdogシステム。
+ */
+function dailyNewsJobWatchdog() {
+  const functionName = 'dailyNewsJobWatchdog';
+  const props = PropertiesService.getScriptProperties();
+  const state = props.getProperty('JOB_STATE');
+  
+  console.log(`[Watchdog] 監視起動。現在のステート: ${state}`);
+  
+  // 自身のトリガー情報を先にクリア (トリガーは1回限りなので実行後に自動消滅するが、登録プロパティを確実に削除)
+  clearWatchdogTrigger_();
+
+  if (!state) {
+    console.log("[Watchdog] ジョブは既に正常終了しています。何もしません。");
+    // 正常終了している場合はリカバリーカウントもクリアしておく
+    props.deleteProperty('WATCHDOG_RECOVERY_COUNT');
+    return;
+  }
+
+  // 1. 生存ハートビートによるFalse Positive (誤判定) 回避
+  const lastActiveStr = props.getProperty('LAST_ACTIVE_TIME');
+  if (lastActiveStr) {
+    const lastActive = parseInt(lastActiveStr, 10);
+    const quietTime = Date.now() - lastActive;
+    if (quietTime < 8 * 60 * 1000) { // 8分以内に何らかの動きがあった場合はまだ実行中とみなす
+      console.log(`[Watchdog] ジョブは最近アクティブでした (最終アクティブ: ${Math.round(quietTime/1000)}秒前)。Watchdogを再スケジュールします。`);
+      setupWatchdogTrigger_();
+      return;
+    }
+  }
+
+  // 2. 無限復旧ループの防止 (連続3回ハングアップ時はメール通知して異常終了)
+  let recoveryCount = parseInt(props.getProperty('WATCHDOG_RECOVERY_COUNT') || '0', 10);
+  if (recoveryCount >= 3) {
+    const errorMsg = `Watchdogによる自動復旧が連続で3回失敗しました。無応答のURLが複数存在するか、重大なシステム障害の可能性があります。自動実行を停止します。`;
+    console.error(`[Watchdog] ${errorMsg}`);
+    writeLog(functionName, 'error', errorMsg);
+    sendErrorAlert(errorMsg);
+    
+    // 状態をクリアして終了
+    cleanUpJobState_();
+    return;
+  }
+
+  // 3. 未検証URL (pending) が存在するかチェック
+  const pendingArticles = getArticlesByStatus('pending');
+  if (pendingArticles.length === 0) {
+    console.warn("[Watchdog] ジョブは未完了ですが、検証待ちURLはありません。状態をクリアして終了します。");
+    cleanUpJobState_();
+    return;
+  }
+
+  // 4. ハングアップの原因とみられる最古のpending記事を特定して除外
+  const culprit = pendingArticles[0]; // 最古の1件
+  console.warn(`[Watchdog] 異常終了を検知。ハングアップ原因URLと推測される記事を除外します: ${culprit.url}`);
+  
+  // ログに記録
+  writeLog(functionName, 'error', `Watchdog detected hang. Excluding culprit URL: ${culprit.url}`);
+  
+  // スプレッドシートから物理削除
+  deleteArticleRow(culprit.article_id);
+
+  // 5. 復旧カウンタをインクリメント
+  props.setProperty('WATCHDOG_RECOVERY_COUNT', String(recoveryCount + 1));
+
+  // 6. トリガーの競合を防ぐため、1分後再開トリガーを一旦クリア
+  clearJobTriggers_();
+
+  // 7. ジョブを再始動
+  console.log("[Watchdog] ジョブを再始動します...");
+  try {
+    dailyNewsJob();
+  } catch (e) {
+    console.error("[Watchdog] 再始動されたジョブの呼び出しでエラーが発生しました:", e);
+  }
+}
+
+/**
+ * Watchdogの復旧・自動除外機能の動作検証用テスト関数。
+ */
+function testWatchdogRecovery() {
+  console.log("--- Watchdog復旧テスト開始 ---");
+  const props = PropertiesService.getScriptProperties();
+  
+  // 1. 状態の完全リセット
+  resetJobState();
+  
+  // 2. 擬似的なクラッシュ状態の再現
+  // JOB_STATE を VALIDATING に設定
+  props.setProperty('JOB_STATE', 'VALIDATING');
+  props.setProperty('LITE_MODE', 'true'); // テストのためLITE_MODEをONに
+  
+  // 最後にアクティブだった時刻を10分前に設定 (Watchdogの誤判定回避ロジックをすり抜けるため)
+  const tenMinutesAgo = Date.now() - (10 * 60 * 1000);
+  props.setProperty('LAST_ACTIVE_TIME', String(tenMinutesAgo));
+  
+  // 3. テスト用のダミー記事（pending）をスプレッドシートに追加
+  // 1件目はハングアップ原因となる無効なURL、2件目は有効なURL
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName('articles');
+  if (!sheet) {
+    console.error("articlesシートが見つかりません。");
+    return;
+  }
+  
+  const dummyCulprit = {
+    article_id: "dummy_culprit_id",
+    published_at: "2026/06/28",
+    source: "Dummy Culprit Site",
+    title: "Watchdog Test: This article causes hang",
+    url: "https://httpstat.us/timeout", // タイムアウトを起こしそうな無効URL
+    ai_summary: "テスト用ダミーURL",
+    category: "Tech",
+    tags: ["Test"],
+    importance: 3,
+    interest_score: 50,
+    reason: "Watchdogテスト用のダミーURLです。",
+    status: "pending"
+  };
+  
+  const dummyValid = {
+    article_id: "dummy_valid_id",
+    published_at: "2026/06/28",
+    source: "Dummy Valid Site",
+    title: "Watchdog Test: This article is valid",
+    url: "https://news.ycombinator.com/", // 有効なURL
+    ai_summary: "テスト用有効ダミーURL",
+    category: "Tech",
+    tags: ["Test"],
+    importance: 3,
+    interest_score: 55,
+    reason: "Watchdogテスト用のダミーURLです。",
+    status: "pending"
+  };
+  
+  console.log("テスト用ダミーデータを pending で保存します...");
+  saveArticle(dummyCulprit);
+  saveArticle(dummyValid);
+  
+  console.log("準備完了。Watchdog関数を手動で起動します。");
+  console.log("期待される動作: 'dummy_culprit_id' の行が物理削除され、ジョブが再起動し、'dummy_valid_id' の検証（およびLITE_MODEによる配信）が実行されること。");
+  
+  try {
+    dailyNewsJobWatchdog();
+    
+    // 実行後の状態を確認
+    const finalState = props.getProperty('JOB_STATE');
+    const recoveryCount = props.getProperty('WATCHDOG_RECOVERY_COUNT');
+    console.log(`Watchdog実行後のステータス:`);
+    console.log(`- JOB_STATE: ${finalState}`);
+    console.log(`- WATCHDOG_RECOVERY_COUNT: ${recoveryCount}`);
+    
+    // スプレッドシート上に dummyCulprit が消えているか確認
+    const remainingCulprit = getArticleById("dummy_culprit_id");
+    console.log(`- 原因記事 (dummy_culprit_id) の存在: ${remainingCulprit ? "残っている (FAIL)" : "削除された (PASS)"}`);
+    
+    // 有効な記事 dummyValid が new または notified になっているか確認
+    const remainingValid = getArticleById("dummy_valid_id");
+    if (remainingValid) {
+      console.log(`- 有効記事 (dummy_valid_id) のステータス: ${remainingValid.status} (${remainingValid.status !== 'pending' ? "PASS" : "FAIL"})`);
+    } else {
+      console.log(`- 有効記事 (dummy_valid_id) の存在: 削除された（検証失敗または配信完了により notified）`);
+    }
+    
+  } catch (e) {
+    console.error("テスト実行中にエラーが発生しました:", e);
+  } finally {
+    // クリーンアップ
+    resetJobState();
+    deleteArticleRow("dummy_culprit_id");
+    deleteArticleRow("dummy_valid_id");
+  }
+}
+
+
