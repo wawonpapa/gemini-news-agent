@@ -623,14 +623,25 @@ function doGet(e) {
             var memoArea = document.getElementById('feedback-memo');
             if (!btnContainer) return;
 
+            btnContainer.innerHTML = ''; // クリア
+
+            var btn = document.createElement('button');
             if (INITIAL_ACTION === 'bad') {
               // 過去配信メールの「Bad」からの遷移に対応（後方互換）
-              btnContainer.innerHTML = '<button onclick="submitEvaluation(\'bad\')" class="btn btn-bad">&#128078; 評価を確定する (Bad)</button>';
+              btn.className = 'btn btn-bad';
+              btn.innerHTML = '&#128078; 評価を確定する (Bad)';
+              btn.onclick = function() { submitEvaluation('bad'); };
+              btnContainer.appendChild(btn);
+
               if (choicesContainer) choicesContainer.style.display = 'flex';
               if (memoArea) memoArea.placeholder = '具体的な理由やメモをご自由に入力してください...';
             } else {
               // デフォルト（Good からの遷移や一般表示）
-              btnContainer.innerHTML = '<button onclick="submitEvaluation(\'good\')" class="btn btn-good">&#128077; 評価を確定する (Good)</button>';
+              btn.className = 'btn btn-good';
+              btn.innerHTML = '&#128077; 評価を確定する (Good)';
+              btn.onclick = function() { submitEvaluation('good'); };
+              btnContainer.appendChild(btn);
+
               if (choicesContainer) choicesContainer.style.display = 'none'; // Good時はネガティブなチェックボックスを非表示に
               if (memoArea) memoArea.placeholder = '良かった理由や感想、メモをご自由に入力してください...';
             }
