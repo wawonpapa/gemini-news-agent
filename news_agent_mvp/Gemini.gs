@@ -54,13 +54,9 @@ ${article.raw_summary || '概要なし'}`;
       importance: { 
         type: "INTEGER", 
         description: "ビジネスパーソン／クリエイターの視点からこの記事が持つ客観的重要度スコア（1: 低い、5: 極めて高い）" 
-      },
-      reason: { 
-        type: "STRING", 
-        description: "なぜこの記事を優先して読むべきか（ユーザーにとっての価値や業界へのインパクト）を親しみやすく明快な日本語1文で表現したもの" 
       }
     },
-    required: ["summary", "category", "tags", "importance", "reason"]
+    required: ["summary", "category", "tags", "importance"]
   };
 
   const payload = {
